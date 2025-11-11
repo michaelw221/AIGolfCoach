@@ -12,3 +12,5 @@ __pycache__/
 
 # Other
 *.DS_Store
+swing_analysis.json
+swing_landmarks.json

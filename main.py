@@ -4,32 +4,38 @@ import numpy as np
 
 # Import the main functions from our new modules
 from lib.videoProcessing.pose_estimator import extract_landmarks_from_video
-from lib.featureExtraction.feature_extractor import analyze_swing
+from lib.featureExtraction.feature_extractor import SwingAnalysis
 
 def main():
     """The main entry point for the analysis pipeline."""
     parser = argparse.ArgumentParser(description='Run a full biomechanical analysis on a golf swing video.')
-    parser.add_argument('video_path', type=str, help='Path to the input video file.')
+    parser.add_argument('--dtl', type=str, required=True, help='Path to the Down-the-Line (DTL) video.')
+    parser.add_argument('--fo', type=str, required=True, help='Path to the Face-On (FO) video.')
     args = parser.parse_args()
     
-    print(f"Starting analysis for: {args.video_path}")
+    print(f"Starting analysis for DTL: '{args.dtl}' and FO: '{args.fo}'")
 
-    # --- Step 1: Call the Pose Estimator ---
-    landmarks_array = extract_landmarks_from_video(args.video_path)
+    # --- Step 1: Process both videos to get landmarks ---
+    landmarks_array_dtl = extract_landmarks_from_video(args.dtl)
+    landmarks_array_fo = extract_landmarks_from_video(args.fo)
     
-    # Exit if pose estimation failed
-    if landmarks_array is None:
-        print("Halting analysis.")
+    if landmarks_array_dtl is None or landmarks_array_fo is None:
+        print("Halting analysis: Pose estimation failed on one or both videos.")
         return
 
-    # --- Step 2: Call the Feature Extractor ---
-    print("\n-> Running Biomechanical Analysis...")
-    analysis_results = analyze_swing(landmarks_array)
-    print("-> Analysis complete.")
+    # --- Step 2: Create an analysis object and run it ---
+    try:
+        # Create an instance of the analysis class
+        swing_analyzer = SwingAnalysis(landmarks_dtl=landmarks_array_dtl, landmarks_fo=landmarks_array_fo)
+        
+        # Run the full analysis with a single method call
+        analysis_results = swing_analyzer.run_full_analysis()
+        
+    except ValueError as e:
+        print(f"Analysis Error: {e}")
+        return
 
-    # --- Step 3: Handle Outputs (Saving and Printing) ---
-    
-    # Save the final, analyzed results to a file
+    # --- Step 3: Handle Outputs ---
     analysis_output_path = 'swing_analysis.json'
     with open(analysis_output_path, 'w') as f:
         # We need a custom way to save NumPy arrays to JSON
@@ -48,11 +54,22 @@ def main():
     
     print(f"\nFinal analysis results saved to {analysis_output_path}")
 
-    # Print a summary to the console
     print("\n--- ANALYSIS SUMMARY ---")
-    print(f"Spine Angle at Address: {analysis_results['metrics']['spine_angle_address']:.1f}°")
-    print(f"Spine Angle at Impact: {analysis_results['metrics']['spine_angle_impact']:.1f}°")
-    print(f"Change at Impact: {analysis_results['metrics']['spine_angle_change_at_impact']:.1f}°")
+    metrics = analysis_results['metrics']
+    
+    # Print Metrics
+    print(f"Spine Angle Change at Impact: {metrics['spine_angle_change_at_impact']:.1f}°")
+    print(f"Max Head Sway in Backswing: {metrics['max_head_sway_cm']:.1f} cm")
+    print(f"Backswing Length (Arm Angle): {metrics['backswing_length_angle']:.1f}°")
+    print(f"Lead Arm Angle at Impact: {metrics['lead_arm_angle_impact']:.1f}°")
+    
+    # Print Faults
+    if analysis_results['diagnosed_faults']:
+        print("\nFaults Detected:")
+        for fault in analysis_results['diagnosed_faults']:
+            print(f"- {fault['name']}: {fault['detail']}")
+    else:
+        print("\nNo major faults detected.")
 
 if __name__ == '__main__':
     main()
