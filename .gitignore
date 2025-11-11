@@ -1,1 +1,14 @@
-.venv
+# Python virtual environment
+.venv/
+venv/
+env/
+
+# Python cache files
+__pycache__/
+*.pyc
+
+# IDE-specific files (e.g., for VS Code)
+.vscode/
+
+# Other
+*.DS_Store
