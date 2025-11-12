@@ -1,75 +1,85 @@
-import argparse
+from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+import os
+import uuid
 import json
 import numpy as np
 
-# Import the main functions from our new modules
+# Import the core components of our AI pipeline
 from lib.videoProcessing.pose_estimator import extract_landmarks_from_video
 from lib.featureExtraction.feature_extractor import SwingAnalysis
 
-def main():
-    """The main entry point for the analysis pipeline."""
-    parser = argparse.ArgumentParser(description='Run a full biomechanical analysis on a golf swing video.')
-    parser.add_argument('--dtl', type=str, required=True, help='Path to the Down-the-Line (DTL) video.')
-    parser.add_argument('--fo', type=str, required=True, help='Path to the Face-On (FO) video.')
-    args = parser.parse_args()
-    
-    print(f"Starting analysis for DTL: '{args.dtl}' and FO: '{args.fo}'")
+app = FastAPI(title="AI Golf Coach API")
 
-    # --- Step 1: Process both videos to get landmarks ---
-    landmarks_array_dtl = extract_landmarks_from_video(args.dtl)
-    landmarks_array_fo = extract_landmarks_from_video(args.fo)
-    
-    if landmarks_array_dtl is None or landmarks_array_fo is None:
-        print("Halting analysis: Pose estimation failed on one or both videos.")
-        return
+# --- Add CORS Middleware ---
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # In production, restrict this to your frontend's domain
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-    # --- Step 2: Create an analysis object and run it ---
+TEMP_DIR = "/tmp/golf_swings"
+os.makedirs(TEMP_DIR, exist_ok=True)
+
+
+# --- Helper Class for JSON Encoding (from your old script) ---
+class NpEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, np.integer): return int(obj)
+        if isinstance(obj, np.floating): return float(obj)
+        if isinstance(obj, np.ndarray): return obj.tolist()
+        return super(NpEncoder, self).default(obj)
+
+
+@app.post("/api/swings")
+async def analyze_swing_endpoint(
+    video_file_dtl: UploadFile = File(..., description="The Down-the-Line (DTL) view of the swing."),
+    video_file_fo: UploadFile = File(..., description="The Face-On (FO) view of the swing.")
+):
+    """
+    Accepts DTL and FO video files, runs the full synchronous analysis pipeline,
+    and returns the results as a JSON response.
+    """
+
+    # Use a unique filename to avoid conflicts if multiple users upload at once
+    unique_id = uuid.uuid4()
+    temp_video_path_dtl = os.path.join(TEMP_DIR, f"{unique_id}_dtl_{video_file_dtl.filename}")
+    temp_video_path_fo = os.path.join(TEMP_DIR, f"{unique_id}_fo_{video_file_fo.filename}")
+    
+    temp_paths = [temp_video_path_dtl, temp_video_path_fo]
+    
     try:
-        # Create an instance of the analysis class
+        with open(temp_video_path_dtl, "wb") as buffer:
+            buffer.write(video_file_dtl.file.read())
+        print(f"DTL video saved temporarily to: {temp_video_path_dtl}")
+
+        with open(temp_video_path_fo, "wb") as buffer:
+            buffer.write(video_file_fo.file.read())
+        print(f"FO video saved temporarily to: {temp_video_path_fo}")
+
+        landmarks_array_dtl = extract_landmarks_from_video(temp_video_path_dtl)
+        landmarks_array_fo = extract_landmarks_from_video(temp_video_path_fo)
+
+        
+        if landmarks_array_dtl is None or landmarks_array_fo is None:
+            raise HTTPException(status_code=400, detail="Could not detect a person in one or both of the videos.")
+
         swing_analyzer = SwingAnalysis(landmarks_dtl=landmarks_array_dtl, landmarks_fo=landmarks_array_fo)
-        
-        # Run the full analysis with a single method call
         analysis_results = swing_analyzer.run_full_analysis()
-        
+
+
+        return json.loads(json.dumps(analysis_results, cls=NpEncoder))
+
     except ValueError as e:
-        print(f"Analysis Error: {e}")
-        return
+        raise HTTPException(status_code=400, detail=f"Analysis Error: {e}")
+    finally:
+        for path in temp_paths:
+            if os.path.exists(path):
+                os.remove(path)
+                print(f"Cleaned up temporary file: {path}")
 
-    # --- Step 3: Handle Outputs ---
-    analysis_output_path = 'swing_analysis.json'
-    with open(analysis_output_path, 'w') as f:
-        # We need a custom way to save NumPy arrays to JSON
-        # This class helps json.dump handle NumPy types
-        class NpEncoder(json.JSONEncoder):
-            def default(self, obj):
-                if isinstance(obj, np.integer):
-                    return int(obj)
-                if isinstance(obj, np.floating):
-                    return float(obj)
-                if isinstance(obj, np.ndarray):
-                    return obj.tolist()
-                return super(NpEncoder, self).default(obj)
-        
-        json.dump(analysis_results, f, indent=4, cls=NpEncoder)
-    
-    print(f"\nFinal analysis results saved to {analysis_output_path}")
-
-    print("\n--- ANALYSIS SUMMARY ---")
-    metrics = analysis_results['metrics']
-    
-    # Print Metrics
-    print(f"Spine Angle Change at Impact: {metrics['spine_angle_change_at_impact']:.1f}°")
-    print(f"Max Head Sway in Backswing: {metrics['max_head_sway_cm']:.1f} cm")
-    print(f"Backswing Length (Arm Angle): {metrics['backswing_length_angle']:.1f}°")
-    print(f"Lead Arm Angle at Impact: {metrics['lead_arm_angle_impact']:.1f}°")
-    
-    # Print Faults
-    if analysis_results['diagnosed_faults']:
-        print("\nFaults Detected:")
-        for fault in analysis_results['diagnosed_faults']:
-            print(f"- {fault['name']}: {fault['detail']}")
-    else:
-        print("\nNo major faults detected.")
-
-if __name__ == '__main__':
-    main()
+@app.get("/")
+def read_root():
+    return {"message": "AI Golf Coach API is running."}

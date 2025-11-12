@@ -17,5 +17,3 @@ def calculate_angle_3d(v1, v2):
     
     angle_rad = np.arccos(cos_theta)
     return np.degrees(angle_rad)
-
-print("Utility functions are defined.")
