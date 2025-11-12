@@ -1,16 +1,28 @@
-# Python virtual environment
-.venv/
-venv/
-env/
-
-# Python cache files
-__pycache__/
-*.pyc
-
 # IDE-specific files (e.g., for VS Code)
 .vscode/
 
-# Other
-*.DS_Store
+# Python virtual environment (in the root)
+/.venv/
+
+# Python cache files (anywhere in the project)
+**/__pycache__/
+*.pyc
+
+# Node.js dependencies for the frontend
+frontend/app/node_modules/
+
+# Production build artifacts for the frontend
+frontend/app/build/
+
+# Generated analysis files (keep these out of version control)
 swing_analysis.json
 swing_landmarks.json
+
+# Log files and environment variables
+*.log
+.env
+.env.*
+!.env.example
+
+# Miscellaneous OS files
+.DS_Store

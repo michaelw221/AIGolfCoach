@@ -6,8 +6,8 @@ import json
 import numpy as np
 
 # Import the core components of our AI pipeline
-from lib.videoProcessing.pose_estimator import extract_landmarks_from_video
-from lib.featureExtraction.feature_extractor import SwingAnalysis
+from lib.python.videoProcessing.pose_estimator import extract_landmarks_from_video
+from lib.python.featureExtraction.feature_extractor import SwingAnalysis
 
 app = FastAPI(title="AI Golf Coach API")
 
