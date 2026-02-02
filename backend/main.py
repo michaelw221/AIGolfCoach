@@ -4,9 +4,13 @@ import os
 import uuid
 import json
 import numpy as np
+import sys
+
+VIDEOPOS3D_PATH = 'C:/Users/Michael/OneDrive - Technological University Dublin/Year 4/Final year project/Repo/AIGolfCoach/VideoPose3dRepo/VideoPose3D' 
+sys.path.append(VIDEOPOS3D_PATH)
 
 # Import the core components of our AI pipeline
-from lib.python.videoProcessing.pose_estimator import extract_landmarks_from_video
+from lib.python.videoProcessing.pipeline import run_pose_estimation_pipeline
 from lib.python.featureExtraction.feature_extractor import SwingAnalysis
 
 app = FastAPI(title="AI Golf Coach API")
@@ -14,7 +18,7 @@ app = FastAPI(title="AI Golf Coach API")
 # --- Add CORS Middleware ---
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, restrict this to your frontend's domain
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -24,7 +28,7 @@ TEMP_DIR = "/tmp/golf_swings"
 os.makedirs(TEMP_DIR, exist_ok=True)
 
 
-# --- Helper Class for JSON Encoding (from your old script) ---
+# --- Helper Class for JSON Encoding ---
 class NpEncoder(json.JSONEncoder):
     def default(self, obj):
         if isinstance(obj, np.integer): return int(obj)
@@ -59,12 +63,11 @@ async def analyze_swing_endpoint(
             buffer.write(video_file_fo.file.read())
         print(f"FO video saved temporarily to: {temp_video_path_fo}")
 
-        landmarks_array_dtl = extract_landmarks_from_video(temp_video_path_dtl)
-        landmarks_array_fo = extract_landmarks_from_video(temp_video_path_fo)
-
+        landmarks_array_dtl = run_pose_estimation_pipeline(temp_video_path_dtl)
+        landmarks_array_fo = run_pose_estimation_pipeline(temp_video_path_fo)
         
         if landmarks_array_dtl is None or landmarks_array_fo is None:
-            raise HTTPException(status_code=400, detail="Could not detect a person in one or both of the videos.")
+            raise HTTPException(status_code=400, detail="Pose estimation failed on one or both videos.")
 
         swing_analyzer = SwingAnalysis(landmarks_dtl=landmarks_array_dtl, landmarks_fo=landmarks_array_fo)
         analysis_results = swing_analyzer.run_full_analysis()

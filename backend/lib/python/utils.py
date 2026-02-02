@@ -17,3 +17,13 @@ def calculate_angle_3d(v1, v2):
     
     angle_rad = np.arccos(cos_theta)
     return np.degrees(angle_rad)
+
+def normalize_screen_coordinates(X, w, h):
+    """
+    Normalizes 2D keypoint coordinates to be in a [-1, 1] range.
+    This is a direct replication of the function from the VideoPose3D repository.
+    """
+    assert X.shape[-1] == 2
+    
+    # Normalize so that [0, w] is mapped to [-1, 1], while preserving the aspect ratio
+    return X / w * 2 - [1, h / w]

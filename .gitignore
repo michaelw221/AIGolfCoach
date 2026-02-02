@@ -2,6 +2,7 @@
 .vscode/
 
 # Python virtual environment (in the root)
+/backend/.venv/
 /.venv/
 
 # Python cache files (anywhere in the project)
