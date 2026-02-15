@@ -1,8 +1,24 @@
 import numpy as np
 from .. import utils # Import from our new module
 
-# Define keypoint indices provided by MediaPipe documentation
-NOSE, LEFT_SHOULDER, RIGHT_SHOULDER, LEFT_ELBOW, LEFT_WRIST, RIGHT_WRIST, LEFT_HIP, RIGHT_HIP = 0, 11, 12, 13, 15, 16, 23, 24
+# Define keypoint indices provided by YoloV8 documentation
+HIP_ROOT = 0
+RIGHT_HIP = 1
+RIGHT_KNEE = 2
+RIGHT_FOOT = 3
+LEFT_HIP = 4
+LEFT_KNEE = 5
+LEFT_FOOT = 6
+SPINE = 7
+THORAX = 8
+NECK = 9
+HEAD = 10
+LEFT_SHOULDER = 11
+LEFT_ELBOW = 12
+LEFT_WRIST = 13
+RIGHT_SHOULDER = 14
+RIGHT_ELBOW = 15
+RIGHT_WRIST = 16
 
 class SwingAnalysis:
     def __init__(self, landmarks_dtl, landmarks_fo):
@@ -147,10 +163,10 @@ class SwingAnalysis:
         A positive value indicates movement away from the target (for a right-handed golfer).
         """
         # Get the head's horizontal position at address
-        head_x_address = landmarks_array[address_idx, NOSE, 0] # 0 corresponds to the X-axis
+        head_x_address = landmarks_array[address_idx, HEAD, 0] # 0 corresponds to the X-axis
         
         # Get all head X positions during the backswing (from address to top)
-        backswing_head_x = landmarks_array[address_idx:top_idx + 1, NOSE, 0]
+        backswing_head_x = landmarks_array[address_idx:top_idx + 1, HEAD, 0]
         
         # Sway is the maximum displacement from the starting position
         sway_in_meters = np.max(np.abs(backswing_head_x - head_x_address))

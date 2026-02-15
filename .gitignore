@@ -27,3 +27,4 @@ swing_landmarks.json
 
 # Miscellaneous OS files
 .DS_Store
+*.pt

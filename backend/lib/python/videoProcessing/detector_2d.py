@@ -3,10 +3,19 @@ import cv2
 import numpy as np
 from ultralytics import YOLO
 
-# Initialize the model once when the module is imported
-POSE_MODEL = YOLO('yolov8s-pose.pt')
+_POSE_MODEL = None  # Global variable to hold the model
+
+def get_model():
+    """Lazy loader for the YOLO model"""
+    global _POSE_MODEL
+    if _POSE_MODEL is None:
+        print("Worker: Loading YOLOv8-Pose model...")
+        _POSE_MODEL = YOLO('yolov8s-pose.pt')
+    return _POSE_MODEL
 
 def detect_2d_poses(video_path: str):
+    model = get_model()
+
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         print(f"Error: Could not open video file at {video_path}")
@@ -23,7 +32,7 @@ def detect_2d_poses(video_path: str):
         if not success:
             break
 
-        results = POSE_MODEL(frame, verbose=False)
+        results = model(frame, verbose=False)
         
         # Check if any results were returned and if the keypoints attribute exists
         if hasattr(results[0], 'keypoints') and results[0].keypoints.shape[0] > 0:

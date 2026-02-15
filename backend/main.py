@@ -1,21 +1,33 @@
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from celery.result import AsyncResult
 import os
-import uuid
-import json
-import numpy as np
 import sys
+import uuid
+import shutil
 
-VIDEOPOS3D_PATH = 'C:/Users/Michael/OneDrive - Technological University Dublin/Year 4/Final year project/Repo/AIGolfCoach/VideoPose3dRepo/VideoPose3D' 
-sys.path.append(VIDEOPOS3D_PATH)
+# --- 1. SETUP PATHS FOR VIDEOPOSE3D (CRITICAL FIX) ---
+# We need to do this BEFORE importing tasks, so lifter_3d can find 'common'
+try:
+    # Get directory of main.py (backend/)
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    # Go up one level to project root (AIGolfCoach/)
+    project_root = os.path.dirname(current_dir)
+    # Define path to VideoPose3D
+    vp3d_path = os.path.join(project_root, 'VideoPose3dRepo', 'VideoPose3D')
+    
+    if os.path.exists(vp3d_path):
+        sys.path.append(vp3d_path)
+    else:
+        print(f"WARNING: VideoPose3D path not found at: {vp3d_path}")
+except Exception as e:
+    print(f"Error setting up paths: {e}")
 
-# Import the core components of our AI pipeline
-from lib.python.videoProcessing.pipeline import run_pose_estimation_pipeline
-from lib.python.featureExtraction.feature_extractor import SwingAnalysis
+# Import the Celery task and config
+from worker.tasks import process_swing_video
 
 app = FastAPI(title="AI Golf Coach API")
 
-# --- Add CORS Middleware ---
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -24,65 +36,80 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-TEMP_DIR = "/tmp/golf_swings"
+# Ensure this directory exists and is accessible by both API and Worker
+# For production, this should be S3. For local dev, a shared folder works.
+TEMP_DIR = os.path.join(os.getcwd(), "temp_uploads")
 os.makedirs(TEMP_DIR, exist_ok=True)
-
-
-# --- Helper Class for JSON Encoding ---
-class NpEncoder(json.JSONEncoder):
-    def default(self, obj):
-        if isinstance(obj, np.integer): return int(obj)
-        if isinstance(obj, np.floating): return float(obj)
-        if isinstance(obj, np.ndarray): return obj.tolist()
-        return super(NpEncoder, self).default(obj)
-
 
 @app.post("/api/swings")
 async def analyze_swing_endpoint(
-    video_file_dtl: UploadFile = File(..., description="The Down-the-Line (DTL) view of the swing."),
-    video_file_fo: UploadFile = File(..., description="The Face-On (FO) view of the swing.")
+    video_file_dtl: UploadFile = File(...),
+    video_file_fo: UploadFile = File(...)
 ):
     """
-    Accepts DTL and FO video files, runs the full synchronous analysis pipeline,
-    and returns the results as a JSON response.
+    Asynchronous Endpoint: Uploads videos and enqueues a processing job.
+    Returns a Task ID immediately.
     """
-
-    # Use a unique filename to avoid conflicts if multiple users upload at once
     unique_id = uuid.uuid4()
-    temp_video_path_dtl = os.path.join(TEMP_DIR, f"{unique_id}_dtl_{video_file_dtl.filename}")
-    temp_video_path_fo = os.path.join(TEMP_DIR, f"{unique_id}_fo_{video_file_fo.filename}")
     
-    temp_paths = [temp_video_path_dtl, temp_video_path_fo]
-    
+    # Save files with absolute paths so the worker can find them
+    dtl_path = os.path.join(TEMP_DIR, f"{unique_id}_dtl_{video_file_dtl.filename}")
+    fo_path = os.path.join(TEMP_DIR, f"{unique_id}_fo_{video_file_fo.filename}")
+
     try:
-        with open(temp_video_path_dtl, "wb") as buffer:
-            buffer.write(video_file_dtl.file.read())
-        print(f"DTL video saved temporarily to: {temp_video_path_dtl}")
-
-        with open(temp_video_path_fo, "wb") as buffer:
-            buffer.write(video_file_fo.file.read())
-        print(f"FO video saved temporarily to: {temp_video_path_fo}")
-
-        landmarks_array_dtl = run_pose_estimation_pipeline(temp_video_path_dtl)
-        landmarks_array_fo = run_pose_estimation_pipeline(temp_video_path_fo)
+        # Save DTL
+        with open(dtl_path, "wb") as buffer:
+            shutil.copyfileobj(video_file_dtl.file, buffer)
         
-        if landmarks_array_dtl is None or landmarks_array_fo is None:
-            raise HTTPException(status_code=400, detail="Pose estimation failed on one or both videos.")
+        # Save FO
+        with open(fo_path, "wb") as buffer:
+            shutil.copyfileobj(video_file_fo.file, buffer)
 
-        swing_analyzer = SwingAnalysis(landmarks_dtl=landmarks_array_dtl, landmarks_fo=landmarks_array_fo)
-        analysis_results = swing_analyzer.run_full_analysis()
+        # --- Enqueue the Task ---
+        # .delay() is the Celery command to send to Redis
+        task = process_swing_video.delay(dtl_path, fo_path)
 
+        return {
+            "task_id": task.id,
+            "status": "pending",
+            "message": "Analysis started. Poll /api/swings/{task_id} for results."
+        }
 
-        return json.loads(json.dumps(analysis_results, cls=NpEncoder))
+    except Exception as e:
+        # Clean up if upload fails before queuing
+        if os.path.exists(dtl_path): os.remove(dtl_path)
+        if os.path.exists(fo_path): os.remove(fo_path)
+        raise HTTPException(status_code=500, detail=str(e))
 
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=f"Analysis Error: {e}")
-    finally:
-        for path in temp_paths:
-            if os.path.exists(path):
-                os.remove(path)
-                print(f"Cleaned up temporary file: {path}")
+@app.get("/api/swings/{task_id}")
+async def get_swing_result(task_id: str):
+    """
+    Check the status of a specific task.
+    """
+    task_result = AsyncResult(task_id)
 
-@app.get("/")
-def read_root():
-    return {"message": "AI Golf Coach API is running."}
+    if task_result.state == 'PENDING':
+        return {"task_id": task_id, "status": "pending"}
+    
+    elif task_result.state == 'PROCESSING':
+        return {
+            "task_id": task_id, 
+            "status": "processing", 
+            "info": task_result.info # Contains 'meta' we set in the worker
+        }
+    
+    elif task_result.state == 'SUCCESS':
+        return {
+            "task_id": task_id,
+            "status": "completed",
+            "result": task_result.result
+        }
+    
+    elif task_result.state == 'FAILURE':
+        return {
+            "task_id": task_id,
+            "status": "failed",
+            "error": str(task_result.result)
+        }
+    
+    return {"task_id": task_id, "status": task_result.state}

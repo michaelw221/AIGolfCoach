@@ -8,44 +8,51 @@ RECEPTIVE_FIELD = 27
 from common.model import TemporalModel
 
 # ----- MODEL INITIALIZATION -----
-
-print("Initializing VideoPose3D model...")
-
-# --- 1. Define Model Architecture ---
-# These parameters are based on the pre-trained model's architecture.
-# They are typically found in the arguments or config of the original repository.
-filter_widths = [3, 3, 3, 3, 3] # This is a common default (receptive field of 243 frames)
-channels = 1024
-dropout = 0.25
-num_joints_in = 17 # Human3.6M format
-in_features = 2 # x, y coordinates
-num_joints_out = 17 # We are predicting 17 3D joints
-
-MODEL_3D = TemporalModel(
-    num_joints_in=num_joints_in,
-    in_features=in_features,
-    num_joints_out=num_joints_out,
-    filter_widths=filter_widths,
-    causal=False, # Use non-causal for highest accuracy
-    dropout=dropout,
-    channels=channels
-)
-
-# --- 2. Load the Pre-trained Weights ---
-# IMPORTANT: Replace this with the actual path to the downloaded model checkpoint file.
-model_path = 'C:/Users/Michael/OneDrive - Technological University Dublin/Year 4/Final year project/Repo/AIGolfCoach/VideoPose3dRepo/VideoPose3D/checkpoint/pretrained_h36m_detectron_coco.bin'
-
-try:
-    checkpoint = torch.load(model_path, map_location=lambda storage, loc: storage)
-    MODEL_3D.load_state_dict(checkpoint['model_pos'])
-except FileNotFoundError:
-    print(f"\n\nERROR: VideoPose3D model checkpoint not found at '{model_path}'")
-    print("Please download the pre-trained model and update the path in lifter_3d.py\n\n")
-
-# --- 3. Set the model to evaluation mode and move to GPU if available ---
+_MODEL_3D = None
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-MODEL_3D = MODEL_3D.to(device)
-MODEL_3D.eval()
+
+def get_lifter_model():
+    """Lazy loader for the 3D model"""
+    global _MODEL_3D
+    if _MODEL_3D is None:
+        print("Worker: Loading VideoPose3D model...")
+        # --- 1. Define Model Architecture ---
+        # These parameters are based on the pre-trained model's architecture.
+        # They are typically found in the arguments or config of the original repository.
+        filter_widths = [3, 3, 3, 3, 3] # This is a common default (receptive field of 243 frames)
+        channels = 1024
+        dropout = 0.25
+        num_joints_in = 17 # Human3.6M format
+        in_features = 2 # x, y coordinates
+        num_joints_out = 17 # We are predicting 17 3D joints
+
+        model = TemporalModel(
+            num_joints_in=num_joints_in,
+            in_features=in_features,
+            num_joints_out=num_joints_out,
+            filter_widths=filter_widths,
+            causal=False, # Use non-causal for highest accuracy
+            dropout=dropout,
+            channels=channels
+        )
+
+        # --- 2. Load the Pre-trained Weights ---
+        # IMPORTANT: Replace this with the actual path to the downloaded model checkpoint file.
+        model_path = 'C:/Users/Michael/OneDrive - Technological University Dublin/Year 4/Final year project/Repo/AIGolfCoach/VideoPose3dRepo/VideoPose3D/checkpoint/pretrained_h36m_detectron_coco.bin'
+
+        try:
+            checkpoint = torch.load(model_path, map_location=lambda storage, loc: storage)
+            model.load_state_dict(checkpoint['model_pos'])
+        except FileNotFoundError:
+            print(f"\n\nERROR: VideoPose3D model checkpoint not found at '{model_path}'")
+            print("Please download the pre-trained model and update the path in lifter_3d.py\n\n")
+
+        # --- 3. Set the model to evaluation mode and move to GPU if available ---
+        model = model.to(device)
+        model.eval()
+        _MODEL_3D = model
+    return _MODEL_3D
+
 
 
 def create_temporal_chunks(keypoints_2d_sequence, receptive_field):
@@ -96,12 +103,13 @@ def run_inference(preprocessed_2d_tensor: torch.Tensor):
     Returns:
         np.ndarray: The predicted 3D pose sequence.
     """
+    model = get_lifter_model()
     # Ensure the input tensor is on the same device as the model (CPU or GPU)
     input_tensor = preprocessed_2d_tensor.to(device)
 
     # Run inference inside a no_grad() block for efficiency
     with torch.no_grad():
-        predicted_3d_poses = MODEL_3D(input_tensor)
+        predicted_3d_poses = model(input_tensor)
 
     # The model's output is on the GPU, move it back to the CPU for NumPy conversion
     poses_cpu = predicted_3d_poses.cpu().numpy()

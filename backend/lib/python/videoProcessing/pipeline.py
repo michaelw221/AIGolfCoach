@@ -15,13 +15,13 @@ def run_pose_estimation_pipeline(video_path: str):
     print("--- Starting Full Pose Estimation Pipeline ---")
     
     # --- Stage 1: 2D Detection ---
-    keypoints_2d = detect_2d_poses(video_path)
+    keypoints_2d, video_resolution = detect_2d_poses(video_path)
     if keypoints_2d is None:
         print("Pipeline halted: 2D detection failed.")
         return None
     
     # --- Stage 2: 3D Lifting ---
-    keypoints_3d = lift_2d_to_3d(keypoints_2d)
+    keypoints_3d = lift_2d_to_3d(keypoints_2d, video_resolution)
     if keypoints_3d is None:
         print("Pipeline halted: 3D lifting failed.")
         return None
