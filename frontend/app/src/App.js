@@ -42,40 +42,40 @@ function App() {
     }
   };
 
-  // --- NEW: Polling Logic ---
   useEffect(() => {
     // If there is no task ID, do nothing
     if (!taskId) return;
 
-    // Set up a timer to check status every 2 seconds
     const intervalId = setInterval(async () => {
-      try {
-        const response = await fetch(`http://127.0.0.1:8000/api/swings/${taskId}`);
-        const data = await response.json();
+  try {
+    const response = await fetch(`http://localhost:8000/api/swings/${taskId}`);
+    const data = await response.json();
 
-        console.log("Polling status:", data.status); // Debugging log
-
-        if (data.status === 'completed') {
-            // Job is done!
-            setResults(data.result); // Get the inner result object
-            setStatus('Analysis complete!');
-            setIsLoading(false);
-            setTaskId(null); // Stop polling
-        } else if (data.status === 'failed') {
-            // Job failed
-            setError(data.error);
-            setStatus('Analysis failed.');
-            setIsLoading(false);
-            setTaskId(null); // Stop polling
-        } else {
-            // Job is still 'pending' or 'processing'
-            setStatus(`Processing... (Status: ${data.status})`);
-        }
-      } catch (err) {
-        console.error("Polling error:", err);
-        // We don't stop polling for network blips, just log it
+    if (data.status === 'completed') {
+      if (data.result && data.result.error) {
+        setError(data.result.error); // This will be "Invalid Camera Angle..."
+        setStatus('Analysis failed.');
+      } else {
+        setResults(data.result); // This is the healthy biomechanics data
+        setStatus('Analysis complete!');
       }
-    }, 2000); // 2000ms = 2 seconds
+      
+      setIsLoading(false);
+      setTaskId(null); // Stop polling
+
+    } else if (data.status === 'failed') {
+      // This handles a hard crash (e.g., out of memory, code error)
+      setError(data.error || "A technical error occurred in the AI worker.");
+      setStatus('Technical failure.');
+      setIsLoading(false);
+      setTaskId(null);
+    } else {
+      setStatus(`Processing... (Status: ${data.status})`);
+    }
+  } catch (err) {
+    console.error("Polling error:", err);
+  }
+}, 2000);
 
     // Cleanup: Stop the timer if the component unmounts or taskId changes
     return () => clearInterval(intervalId);

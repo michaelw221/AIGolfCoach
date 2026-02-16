@@ -1,30 +1,28 @@
-# lib/python/videoProcessing/pipeline.py
-from .detector_2d import detect_2d_poses
-from .lifter_3d import lift_2d_to_3d
+from .poseEstimation.detector_2d import detect_2d_poses
+from .poseEstimation.lifter_3d import lift_2d_to_3d
+from .preProcessing.viewpointValidator import validate_viewpoint
+from .preProcessing.stabilizer import stabilize_video
+import os
 
-def run_pose_estimation_pipeline(video_path: str):
-    """
-    The main orchestrator for the high-accuracy 2D->3D pipeline.
+def run_pose_estimation_pipeline(video_path: str, expected_view: str):
+    # --- 1. Stabilization ---
+    stab_path = video_path.replace(".mp4", "_stab.mp4")
+    stabilize_video(video_path, stab_path)
 
-    Args:
-        video_path (str): The path to the input video file.
+    # --- 2. 2D Detection ---
+    keypoints_2d, res = detect_2d_poses(stab_path)
     
-    Returns:
-        np.ndarray or None: Final 3D pose landmarks, or None if any stage fails.
-    """
-    print("--- Starting Full Pose Estimation Pipeline ---")
+    # --- 3. Viewpoint Validation ---
+    actual_view, ratio = validate_viewpoint(keypoints_2d)
+    print(f"Validation: Expected {expected_view}, Detected {actual_view} (Ratio: {ratio:.2f})")
     
-    # --- Stage 1: 2D Detection ---
-    keypoints_2d, video_resolution = detect_2d_poses(video_path)
-    if keypoints_2d is None:
-        print("Pipeline halted: 2D detection failed.")
-        return None
+    if actual_view != expected_view:
+        return {"error": f"Invalid Camera Angle. This slot expects {expected_view}, but we detected {actual_view}."}
+
+    # --- 4. 3D Lifting ---
+    keypoints_3d = lift_2d_to_3d(keypoints_2d, res)
     
-    # --- Stage 2: 3D Lifting ---
-    keypoints_3d = lift_2d_to_3d(keypoints_2d, video_resolution)
-    if keypoints_3d is None:
-        print("Pipeline halted: 3D lifting failed.")
-        return None
+    # Cleanup stabilized file
+    if os.path.exists(stab_path): os.remove(stab_path)
     
-    print("--- Pose Estimation Pipeline Complete ---")
     return keypoints_3d

@@ -1,7 +1,7 @@
 # lib/python/videoProcessing/lifter_3d.py
 import numpy as np
 import torch
-from .. import utils
+from lib.python import utils
 
 RECEPTIVE_FIELD = 27 
 
@@ -37,7 +37,6 @@ def get_lifter_model():
         )
 
         # --- 2. Load the Pre-trained Weights ---
-        # IMPORTANT: Replace this with the actual path to the downloaded model checkpoint file.
         model_path = 'C:/Users/Michael/OneDrive - Technological University Dublin/Year 4/Final year project/Repo/AIGolfCoach/VideoPose3dRepo/VideoPose3D/checkpoint/pretrained_h36m_detectron_coco.bin'
 
         try:
