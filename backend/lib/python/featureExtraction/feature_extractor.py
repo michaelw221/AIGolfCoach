@@ -93,7 +93,7 @@ class SwingAnalysis:
         spine_angle_impact = self._get_spine_angle(self.landmarks_dtl[impact_idx])
         
         return {
-            "spine_angle_change_at_impact": spine_angle_impact - spine_angle_address,
+            "spine_angle_change_at_impact": spine_angle_address - spine_angle_impact,
             "spine_angle_address": spine_angle_address,
             "spine_angle_impact": spine_angle_impact,
         }
