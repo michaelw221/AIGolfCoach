@@ -56,23 +56,36 @@ def get_lifter_model():
 
 def create_temporal_chunks(keypoints_2d_sequence, receptive_field):
     """
-    Pads and prepares the 2D keypoint sequence for a temporal model.
+    Pads and prepares the 2D keypoint sequence.
+    Ensures the sequence is at least as long as the receptive field.
     """
     num_frames = keypoints_2d_sequence.shape[0]
+    
+    # VideoPose3D standard models often need 243 or 163 frames.
+    REQUIRED_MIN_FRAMES = 243 # Using 243 to be safe for all VP3D variants
+    
+    # 1. If the video is too short, pad it to the minimum required length first
+    if num_frames < REQUIRED_MIN_FRAMES:
+        diff = REQUIRED_MIN_FRAMES - num_frames
+        pad_left = diff // 2
+        pad_right = diff - pad_left
+        # Pad by reflecting the start and end of the swing
+        keypoints_2d_sequence = np.pad(
+            keypoints_2d_sequence, 
+            ((pad_left, pad_right), (0, 0), (0, 0)), 
+            mode='reflect'
+        )
+        num_frames = keypoints_2d_sequence.shape[0]
 
-    # Calculate the padding required on each side of the sequence
+    # 2. Calculate the standard receptive field padding
     pad = (receptive_field - 1) // 2
-
-    # Pad the sequence. We "reflect" the start and end poses to create the padding.
-    # E.g., for frame 0, we need to see frames from -13 to 13.
-    # We use frame 13's pose for -13, frame 12's for -12, and so on.
+    
+    # 3. Final Padding
     padded_sequence = np.pad(keypoints_2d_sequence, ((pad, pad), (0, 0), (0, 0)), mode='reflect')
-
-    # The model expects a "batch" of one video. So we add a new dimension at the start.
-    # Shape becomes (1, num_frames + 2*pad, num_keypoints, 2 for x,y)
+    
+    # 4. Convert to Batch Format (1, Frames, Keypoints, 2)
     input_batch = np.expand_dims(padded_sequence, axis=0)
-
-    # Convert to a PyTorch tensor, ready for the model
+    
     return torch.from_numpy(input_batch.astype('float32'))
 
 def preprocess_2d_data(keypoints_2d_sequence: np.ndarray, video_resolution: tuple):
@@ -102,7 +115,7 @@ def run_inference(preprocessed_2d_tensor: torch.Tensor):
     Returns:
         np.ndarray: The predicted 3D pose sequence.
     """
-    model = get_lifter_model()
+    model = _MODEL_3D
     # Ensure the input tensor is on the same device as the model (CPU or GPU)
     input_tensor = preprocessed_2d_tensor.to(device)
 

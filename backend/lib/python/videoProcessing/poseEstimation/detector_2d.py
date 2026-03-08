@@ -14,7 +14,7 @@ def get_model():
     return _POSE_MODEL
 
 def detect_2d_poses(video_path: str):
-    model = get_model()
+    model = _POSE_MODEL
 
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():

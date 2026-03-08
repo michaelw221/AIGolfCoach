@@ -1,6 +1,6 @@
 from .poseEstimation.detector_2d import detect_2d_poses
 from .poseEstimation.lifter_3d import lift_2d_to_3d
-from .preProcessing.viewpointValidator import validate_viewpoint
+from .preProcessing.viewpoint_validator import validate_viewpoint
 from .preProcessing.stabilizer import stabilize_video
 import os
 
@@ -25,4 +25,4 @@ def run_pose_estimation_pipeline(video_path: str, expected_view: str):
     # Cleanup stabilized file
     if os.path.exists(stab_path): os.remove(stab_path)
     
-    return keypoints_3d
+    return keypoints_2d, keypoints_3d
