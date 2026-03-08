@@ -1,19 +1,22 @@
-from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi import FastAPI, File, UploadFile, HTTPException, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
-from celery.result import AsyncResult
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from jose import JWTError, jwt
+from sqlalchemy.orm import Session
+from passlib.context import CryptContext
+from lib.python.account.auth import verify_password, create_access_token, get_password_hash, SECRET_KEY, ALGORITHM
+from db.database import engine, get_db
+import db.models as models
+import db.schemas as schemas
 import os
 import sys
 import uuid
 import shutil
 
-# --- 1. SETUP PATHS FOR VIDEOPOSE3D (CRITICAL FIX) ---
-# We need to do this BEFORE importing tasks, so lifter_3d can find 'common'
+# --- 1. SETUP PATHS FOR VIDEOPOSE3D ---
 try:
-    # Get directory of main.py (backend/)
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    # Go up one level to project root (AIGolfCoach/)
     project_root = os.path.dirname(current_dir)
-    # Define path to VideoPose3D
     vp3d_path = os.path.join(project_root, 'VideoPose3dRepo', 'VideoPose3D')
     
     if os.path.exists(vp3d_path):
@@ -23,11 +26,16 @@ try:
 except Exception as e:
     print(f"Error setting up paths: {e}")
 
-# Import the Celery task and config
+# Import the Celery task
 from worker.tasks import process_swing_video
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/auth/login")
+
+# Create Tables
+models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="AI Golf Coach API")
 
+# CORS Setup
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -36,80 +44,115 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Ensure this directory exists and is accessible by both API and Worker
-# For production, this should be S3. For local dev, a shared folder works.
+# Temp Dir Setup
 TEMP_DIR = os.path.join(os.getcwd(), "temp_uploads")
 os.makedirs(TEMP_DIR, exist_ok=True)
 
-@app.post("/api/swings")
+# Password Hashing
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+def get_password_hash(password):
+    return pwd_context.hash(password)
+
+# --- AUTH DEPENDENCY ---
+async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+    credentials_exception = HTTPException(status_code=401, detail="Could not validate credentials")
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None: raise credentials_exception
+    except JWTError: raise credentials_exception
+    
+    user = db.query(models.User).filter(models.User.username == username).first()
+    if user is None: raise credentials_exception
+    return user
+
+# --- AUTH ENDPOINTS ---
+@app.post("/api/auth/login")
+async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    user = db.query(models.User).filter(models.User.username == form_data.username).first()
+    if not user or not verify_password(form_data.password, user.hashed_password):
+        raise HTTPException(status_code=400, detail="Incorrect username or password")
+    
+    access_token = create_access_token(data={"sub": user.username})
+    return {"access_token": access_token, "token_type": "bearer"}
+
+# --- USER ENDPOINTS ---
+@app.post("/api/users", response_model=schemas.UserResponse)
+def create_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
+    db_user = db.query(models.User).filter(models.User.email == user.email).first()
+    if db_user:
+        raise HTTPException(status_code=400, detail="Email already registered")
+    
+    hashed_pwd = get_password_hash(user.password)
+    new_user = models.User(email=user.email, username=user.username, hashed_password=hashed_pwd)
+    
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+    return new_user
+
+# --- SWING ANALYSIS ENDPOINTS ---
+@app.post("/api/swings", response_model=schemas.SwingJobResponse, status_code=status.HTTP_202_ACCEPTED)
 async def analyze_swing_endpoint(
     video_file_dtl: UploadFile = File(...),
-    video_file_fo: UploadFile = File(...)
+    video_file_fo: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user) # NOW PROTECTED
 ):
-    """
-    Asynchronous Endpoint: Uploads videos and enqueues a processing job.
-    Returns a Task ID immediately.
-    """
-    unique_id = uuid.uuid4()
+    job_id = str(uuid.uuid4())
     
-    # Save files with absolute paths so the worker can find them
-    dtl_path = os.path.join(TEMP_DIR, f"{unique_id}_dtl_{video_file_dtl.filename}")
-    fo_path = os.path.join(TEMP_DIR, f"{unique_id}_fo_{video_file_fo.filename}")
+    # Create DB record linked to the logged-in user
+    new_job = models.SwingJob(
+        id=job_id,
+        status="pending",
+        user_id=current_user.id # Sarah now owns this swing!
+    )
+    db.add(new_job)
+    db.commit()
+    db.refresh(new_job)
+
+    # 3. Save Files
+    dtl_path = os.path.join(TEMP_DIR, f"{job_id}_dtl_{video_file_dtl.filename}")
+    fo_path = os.path.join(TEMP_DIR, f"{job_id}_fo_{video_file_fo.filename}")
 
     try:
-        # Save DTL
         with open(dtl_path, "wb") as buffer:
             shutil.copyfileobj(video_file_dtl.file, buffer)
         
-        # Save FO
         with open(fo_path, "wb") as buffer:
             shutil.copyfileobj(video_file_fo.file, buffer)
 
-        # --- Enqueue the Task ---
-        # .delay() is the Celery command to send to Redis
-        task = process_swing_video.delay(dtl_path, fo_path)
+        # 4. Trigger Celery Task
+        # IMPORTANT: We pass the job_id to the task!
+        process_swing_video.delay(job_id, dtl_path, fo_path)
 
-        return {
-            "task_id": task.id,
-            "status": "pending",
-            "message": "Analysis started. Poll /api/swings/{task_id} for results."
-        }
+        # Update status to processing now that it's in the queue
+        new_job.status = "processing"
+        db.commit()
 
     except Exception as e:
-        # Clean up if upload fails before queuing
-        if os.path.exists(dtl_path): os.remove(dtl_path)
-        if os.path.exists(fo_path): os.remove(fo_path)
+        # If saving files or triggering Celery fails, log it in DB
+        new_job.status = "failed"
+        new_job.error_message = f"Submission failed: {str(e)}"
+        db.commit()
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/api/swings/{task_id}")
-async def get_swing_result(task_id: str):
-    """
-    Check the status of a specific task.
-    """
-    task_result = AsyncResult(task_id)
+    # 5. Return the Job Object
+    # The frontend will use the 'id' from this object to poll GET /api/swings/{id}
+    return new_job 
 
-    if task_result.state == 'PENDING':
-        return {"task_id": task_id, "status": "pending"}
-    
-    elif task_result.state == 'PROCESSING':
-        return {
-            "task_id": task_id, 
-            "status": "processing", 
-            "info": task_result.info # Contains 'meta' we set in the worker
-        }
-    
-    elif task_result.state == 'SUCCESS':
-        return {
-            "task_id": task_id,
-            "status": "completed",
-            "result": task_result.result
-        }
-    
-    elif task_result.state == 'FAILURE':
-        return {
-            "task_id": task_id,
-            "status": "failed",
-            "error": str(task_result.result)
-        }
-    
-    return {"task_id": task_id, "status": task_result.state}
+@app.get("/api/swings/{job_id}", response_model=schemas.SwingJobResponse)
+def get_swing_result(job_id: str, db: Session = Depends(get_db)):
+    job = db.query(models.SwingJob).filter(models.SwingJob.id == job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job
+
+@app.get("/api/swings", response_model=list[schemas.SwingJobResponse])
+def get_user_swings(
+    db: Session = Depends(get_db), 
+    current_user: models.User = Depends(get_current_user)
+):
+    """Returns all swing analyses belonging to the logged-in user."""
+    return db.query(models.SwingJob).filter(models.SwingJob.user_id == current_user.id).order_by(models.SwingJob.created_at.desc()).all()

@@ -3,99 +3,115 @@ import React, { useState, useEffect } from 'react';
 import UploadForm from './components/uploadForm';
 import ResultsDisplay from './components/resultsDisplay';
 import LoadingSpinner from './components/loadingSpinner';
+import { getToken, removeToken, getAuthHeader } from './services/auth';
+import UserAuth from './components/userAuth';
+import History from './components/history';
 import './App.css';
 
 function App() {
   const [status, setStatus] = useState('Ready to analyze. Please upload both video files.');
-  const [results, setResults] = useState(null);
   const [error, setError] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [taskId, setTaskId] = useState(null); // NEW: Store the Task ID
+  const [isAuth, setIsAuth] = useState(!!getToken());
+  const [view, setView] = useState('upload'); // 'upload' or 'history'
+  const [results, setResults] = useState(null);
+  const [jobId, setJobId] = useState(null);
+
+  const handleLogout = () => {
+    removeToken();
+    setIsAuth(false);
+    setResults(null);
+  };
 
   const handleSubmit = async (event) => {
     event.preventDefault();
-    
     setIsLoading(true);
-    setStatus('Uploading and queuing...');
-    setResults(null);
     setError(null);
-    setTaskId(null); // Reset task ID
+    setResults(null);
+    setStatus('Uploading and queuing...');
 
     const formData = new FormData(event.currentTarget);
-    const apiUrl = 'http://localhost:8000/api/swings';
-
+    
     try {
-      // 1. Send the file to start the job
-      const response = await fetch(apiUrl, { method: 'POST', body: formData });
+      const response = await fetch('http://localhost:8000/api/swings', {
+        method: 'POST',
+        headers: getAuthHeader(),
+        body: formData 
+      });
       const data = await response.json();
-
-      if (!response.ok) throw new Error(data.detail || 'An unknown error occurred.');
+      if (!response.ok) throw new Error(data.detail || 'Upload failed');
       
-      // 2. Save the Task ID to start polling
-      setTaskId(data.task_id);
+      setJobId(data.id);
       setStatus('Upload complete. Processing in background...');
-
-    } catch (err) {
-      setStatus('An error occurred during upload.');
+    } catch (err) { 
       setError(err.message);
       setIsLoading(false);
     }
   };
 
   useEffect(() => {
-    // If there is no task ID, do nothing
-    if (!taskId) return;
+    if (!jobId) return;
 
     const intervalId = setInterval(async () => {
-  try {
-    const response = await fetch(`http://localhost:8000/api/swings/${taskId}`);
-    const data = await response.json();
+      try {
+        const response = await fetch(`http://localhost:8000/api/swings/${jobId}`, {
+          headers: getAuthHeader()
+        });
+        const data = await response.json();
 
-    if (data.status === 'completed') {
-      if (data.result && data.result.error) {
-        setError(data.result.error); // This will be "Invalid Camera Angle..."
-        setStatus('Analysis failed.');
-      } else {
-        setResults(data.result); // This is the healthy biomechanics data
-        setStatus('Analysis complete!');
+        if (data.status === 'complete') {
+          setResults(data.analysis_results); 
+          setStatus('Analysis complete!');
+          setIsLoading(false);
+          setJobId(null);
+          clearInterval(intervalId);
+        } else if (data.status === 'failed') {
+          setError(data.error_message || "A technical error occurred.");
+          setStatus('Analysis failed.');
+          setIsLoading(false);
+          setJobId(null);
+          clearInterval(intervalId);
+        } else {
+          setStatus(`Processing... (Status: ${data.status})`);
+        }
+      } catch (err) {
+        console.error("Polling error:", err);
       }
-      
-      setIsLoading(false);
-      setTaskId(null); // Stop polling
+    }, 2000);
 
-    } else if (data.status === 'failed') {
-      // This handles a hard crash (e.g., out of memory, code error)
-      setError(data.error || "A technical error occurred in the AI worker.");
-      setStatus('Technical failure.');
-      setIsLoading(false);
-      setTaskId(null);
-    } else {
-      setStatus(`Processing... (Status: ${data.status})`);
-    }
-  } catch (err) {
-    console.error("Polling error:", err);
-  }
-}, 2000);
-
-    // Cleanup: Stop the timer if the component unmounts or taskId changes
     return () => clearInterval(intervalId);
-  }, [taskId]);
+  }, [jobId]);
+
+  if (!isAuth) return <UserAuth onLoginSuccess={() => setIsAuth(true)} />;
 
   return (
     <main className="container">
       <nav>
         <ul><li><strong>AI Golf Coach</strong></li></ul>
-        <ul><li>Async Prototype</li></ul>
+        <ul>
+          <li><button className="contrast" onClick={() => {setView('upload'); setResults(null); setError(null);}}>New Analysis</button></li>
+          <li><button className="secondary" onClick={() => setView('history')}>History</button></li>
+          <li><button className="outline" onClick={handleLogout}>Logout</button></li>
+        </ul>
       </nav>
 
-      <UploadForm handleSubmit={handleSubmit} isLoading={isLoading} />
-      
-      {isLoading ? (
-        <LoadingSpinner />
+      {view === 'upload' ? (
+        <>
+          {!results && !isLoading && <UploadForm handleSubmit={handleSubmit} isLoading={isLoading} />}
+          
+          {isLoading && <LoadingSpinner status={status} />}
+          
+          {(results || error) && (
+            <ResultsDisplay status={status} results={results} error={error} />
+          )}
+        </>
       ) : (
-        <ResultsDisplay status={status} results={results} error={error} />
+        <History onSelectJob={(id) => { 
+          setJobId(id); 
+          setIsLoading(true); // Trigger loading while it fetches the history item
+          setView('upload'); 
+        }} />
       )}
-      
     </main>
   );
 }

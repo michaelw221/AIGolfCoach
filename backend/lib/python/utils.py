@@ -12,6 +12,9 @@ def calculate_angle_3d(v1, v2):
     norm_v1 = np.linalg.norm(v1)
     norm_v2 = np.linalg.norm(v2)
     
+    if norm_v1 == 0 or norm_v2 == 0:
+        return 0.0 # Return 0 instead of crashing/returning NaN
+    
     # Clip the value to the valid range [-1.0, 1.0] to prevent floating point errors
     cos_theta = np.clip(dot_product / (norm_v1 * norm_v2), -1.0, 1.0)
     
