@@ -4,23 +4,23 @@ import base64
 from .. import utils # Import from our new module
 
 # Define keypoint indices provided by YoloV8 documentation
-HIP_ROOT = 0
-RIGHT_HIP = 1
-RIGHT_KNEE = 2
-RIGHT_FOOT = 3
-LEFT_HIP = 4
-LEFT_KNEE = 5
-LEFT_FOOT = 6
-SPINE = 7
-THORAX = 8
-NECK = 9
-HEAD = 10
-LEFT_SHOULDER = 11
-LEFT_ELBOW = 12
-LEFT_WRIST = 13
-RIGHT_SHOULDER = 14
-RIGHT_ELBOW = 15
-RIGHT_WRIST = 16
+NOSE = 0
+LEFT_EYE = 1
+RIGHT_EYE = 2
+LEFT_EAR = 3
+RIGHT_EAR = 4
+LEFT_SHOULDER = 5
+RIGHT_SHOULDER = 6
+LEFT_ELBOW = 7
+RIGHT_ELBOW = 8
+LEFT_WRIST = 9
+RIGHT_WRIST = 10
+LEFT_HIP = 11
+RIGHT_HIP = 12
+LEFT_KNEE = 13
+RIGHT_KNEE = 14
+LEFT_ANKLE = 15
+RIGHT_ANKLE = 16
 
 class SwingAnalysis:
     def __init__(self, landmarks_dtl, landmarks_fo, dtl_video_path, fo_video_path):
@@ -35,8 +35,8 @@ class SwingAnalysis:
         self.dtl_path = dtl_video_path
         self.fo_path = fo_video_path
         
-        self.key_frames_dtl = self._find_key_frames(self.landmarks_dtl)
-        self.key_frames_fo = self._find_key_frames(self.landmarks_fo)
+        self.key_frames_dtl = self._find_key_frames(self.landmarks_dtl, "DTL")
+        self.key_frames_fo = self._find_key_frames(self.landmarks_fo, "FO")
 
     def _get_frame_as_base64(self, video_path, frame_idx, landmarks):
         cap = cv2.VideoCapture(video_path)
@@ -77,35 +77,18 @@ class SwingAnalysis:
             "debug_images": debug_images
         }
 
-    def _find_key_frames(self, landmarks_array):
-        """
-        Robust 2D Key Frame Detection.
-        Y increases DOWNWARDS (Bottom of screen is high Y).
-        """
+    def _find_key_frames(self, landmarks_array, view_type):
+        num_total_frames = len(landmarks_array)
         hand_midpoints = np.array([utils.get_midpoint(frame[:, :2], LEFT_WRIST, RIGHT_WRIST) for frame in landmarks_array])
         hand_y = hand_midpoints[:, 1]
-        num_total_frames = len(hand_y)
 
-        # 1. Address: Max Y (lowest point of hands) in first 60 frames
-        search_limit = min(60, num_total_frames)
-        address_idx = np.argmax(hand_y[:search_limit])
+        address_idx = 5
+        # Top is the absolute highest point
+        top_idx = 10 + np.argmin(hand_y[10:int(num_total_frames*0.7)])
+        # Impact is when hands return to address Y-level in the downswing
+        search_space = np.abs(hand_y[top_idx+5:int(num_total_frames*0.9)] - hand_y[address_idx])
+        impact_idx = top_idx + 5 + np.argmin(search_space)
 
-        # 2. Top of Swing: Min Y (highest point of hands) 
-        # Search from address to the end
-        top_idx = address_idx + np.argmin(hand_y[address_idx:])
-
-        # 3. Impact: The lowest point of hands AFTER the Top of Swing
-        # We search from the top_idx + a buffer, but stop well before the end 
-        # to ensure we don't pick the finish pose
-        impact_search_start = top_idx + 5
-        impact_search_end = int(top_idx + (num_total_frames - top_idx) * 0.7) # Look only in the next 70% of the remaining video
-        
-        # Impact is the LOWEST hand position (Max Y) in that downswing window
-        impact_idx = impact_search_start + np.argmax(hand_y[impact_search_start:impact_search_end])
-
-        print(f"--- 2D Key Frame Detection ---")
-        print(f"Detected -> Address: {address_idx}, Top: {top_idx}, Impact: {impact_idx}")
-        
         return { 
             'address': int(address_idx), 
             'top': int(top_idx), 
@@ -118,8 +101,8 @@ class SwingAnalysis:
         
         spine_addr = self._get_spine_angle(self.landmarks_dtl[kf['address']])
         spine_impact = self._get_spine_angle(self.landmarks_dtl[kf['impact']])
-        knee_addr = self._get_knee_angle(self.landmarks_dtl[kf['address']], LEFT_HIP, LEFT_KNEE, LEFT_FOOT)
-        knee_impact = self._get_knee_angle(self.landmarks_dtl[kf['impact']], LEFT_HIP, LEFT_KNEE, LEFT_FOOT)
+        knee_addr = self._get_knee_angle(self.landmarks_dtl[kf['address']], LEFT_HIP, LEFT_KNEE, LEFT_ANKLE)
+        knee_impact = self._get_knee_angle(self.landmarks_dtl[kf['impact']], LEFT_HIP, LEFT_KNEE, LEFT_ANKLE)
         hand_path = self._get_hand_path_angle(self.landmarks_dtl, kf['address'], kf['top'], kf['impact'])
 
         return {
@@ -149,19 +132,19 @@ class SwingAnalysis:
     def _diagnose_faults(self, metrics):
         """Runs the rule engine based on the calculated metrics."""
         faults = []
-        if metrics.get("spine_angle_change_at_impact", 0) > 5:
+        if metrics.get("spine_angle_change_at_impact", 0) > 5.06:
             faults.append({
                 "name": "Early Extension (Loss of Posture)",
                 "detail": f"Your spine angle increased by {metrics.get('spine_angle_change_at_impact', 0):.1f} degrees at impact."
             })
             
-        if metrics.get("max_head_sway_cm", 0) > 10:
+        if metrics.get("max_head_sway_cm", 0) > 25.37:
             faults.append({
                 "name": "Sway",
                 "detail": f"Your head moved laterally by {metrics.get('max_head_sway_cm', 0):.1f} cm during the backswing."
             })
             
-        if metrics.get("backswing_length_angle", 0) > 100:
+        if metrics.get("backswing_length_angle", 0) > 143.14:
             faults.append({
                 "name": "Over-swinging",
                 "detail": f"Your lead arm went to {metrics.get('backswing_length_angle', 0):.1f} degrees, which is past parallel."
@@ -173,26 +156,26 @@ class SwingAnalysis:
                 "detail": f"Your lead arm was bent to {metrics.get('lead_arm_angle_impact', 180):.1f} degrees at impact."
             })
 
-        if metrics.get("max_hip_slide_cm", 0) > 15:
+        if metrics.get("max_hip_slide_cm", 0) > 13.18:
             faults.append({
                 "name": "Excessive Slide", 
                 "detail": "Hips moved too far toward the target, preventing rotation."
             })
 
-        if metrics.get("x_factor_angle", 0) < 25:
+        if metrics.get("x_factor_angle", 0) < 9.12:
             faults.append({
                 "name": "Poor Separation", 
                 "detail": "Hips and shoulders turned together. Work on X-Factor."
             })
 
-        if metrics.get("knee_flex_change", 0) > 20:
+        if metrics.get("knee_flex_change", 0) > 5.06:
             faults.append({
                 "name": "Loss of Knee Flex", 
                 "detail": "Your lead leg straightened too much, causing you to stand up."
             })
 
         hand_angle = metrics.get("initial_hand_path_angle", 0)
-        if hand_angle > 40:
+        if hand_angle > 13.18:
             faults.append({
                 "name": "Over the Top", 
                 "detail": f"Your hands moved outward toward the ball at a {hand_angle:.1f}° angle instead of dropping straight down."
@@ -201,12 +184,12 @@ class SwingAnalysis:
         return faults
 
     def _get_spine_angle(self, landmarks_frame):
-        # 1. Get vectors
-        hip = utils.get_midpoint(landmarks_frame[:, :2], LEFT_HIP, RIGHT_HIP)
-        neck = landmarks_frame[NECK, :2]
-        spine_vector = neck - hip
+        # Explicitly slice [:2] to ignore the confidence score
+        hip_mid = utils.get_midpoint(landmarks_frame[:, :2], LEFT_HIP, RIGHT_HIP)
+        shldr_mid = utils.get_midpoint(landmarks_frame[:, :2], LEFT_SHOULDER, RIGHT_SHOULDER)
         
-        # 2. Get the angle relative to the vertical line
+        spine_vector = shldr_mid - hip_mid
+        # In 2D, Y increases downwards. So "Up" towards the head is[0, -1]
         angle_rad = np.arctan2(spine_vector[0], -spine_vector[1])
         angle_deg = np.degrees(angle_rad)
         
@@ -234,15 +217,15 @@ class SwingAnalysis:
         v1 = shoulder - elbow
         v2 = wrist - elbow
         return utils.calculate_angle_2d(v1, v2)
-
+    
     def _get_knee_angle(self, frame, hip_idx, knee_idx, foot_idx):
         v1 = frame[hip_idx, :2] - frame[knee_idx, :2]
         v2 = frame[foot_idx, :2] - frame[knee_idx, :2]
         return utils.calculate_angle_2d(v1, v2)
 
     def _get_head_sway(self, landmarks_array, address_idx, top_idx):
-        head_x_address = landmarks_array[address_idx, HEAD, 0]
-        backswing_head_x = landmarks_array[address_idx:top_idx + 1, HEAD, 0]
+        head_x_address = landmarks_array[address_idx, NOSE, 0]
+        backswing_head_x = landmarks_array[address_idx:top_idx + 1, NOSE, 0]
         
         pixel_sway = np.max(np.abs(backswing_head_x - head_x_address))
         
@@ -340,6 +323,7 @@ class SwingAnalysis:
             shldr_l = landmarks_array[idx, LEFT_SHOULDER, :2]
             shldr_r = landmarks_array[idx, RIGHT_SHOULDER, :2]
             width = np.linalg.norm(shldr_l - shldr_r)
+            if width > 300: return 300.0
             if width > 20: # Valid width found
                 return width
         return 40.0
@@ -349,6 +333,9 @@ class SwingAnalysis:
         Fixes 'lost tracking' frames (where YOLO outputs [0, 0]) by 
         interpolating the position from surrounding valid frames.
         """
+        if landmarks_array.size == 0 or landmarks_array.shape[0] == 0:
+            return landmarks_array
+
         cleaned = np.copy(landmarks_array)
         frames, joints, dims = cleaned.shape
         
