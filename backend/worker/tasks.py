@@ -2,6 +2,7 @@ import os
 import sys
 import json
 import numpy as np
+import math
 from pathlib import Path
 from celery.signals import worker_process_init
 
@@ -30,14 +31,24 @@ from lib.python.videoProcessing.poseEstimation.lifter_3d import get_lifter_model
 from db.database import SessionLocal
 import db.models as models
 
-# Helper for JSON serialization of NumPy types
-class NpEncoder(json.JSONEncoder):
-    def default(self, obj):
-        if isinstance(obj, np.integer): return int(obj)
-        if isinstance(obj, np.floating): return float(obj)
-        if isinstance(obj, np.ndarray): return obj.tolist()
-        if isinstance(obj, np.bool_): return bool(obj)
-        return super(NpEncoder, self).default(obj)
+def sanitize_for_json(obj):
+    """
+    Recursively scrubs a dictionary/list. 
+    Converts NumPy types to Python types and turns NaN/Inf into 0.0.
+    """
+    if isinstance(obj, dict):
+        return {k: sanitize_for_json(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple, np.ndarray)):
+        return [sanitize_for_json(v) for v in obj]
+    elif isinstance(obj, (float, np.floating)):
+        if math.isnan(obj) or math.isinf(obj):
+            return 0.0  # PostgreSQL safe!
+        return float(obj)
+    elif isinstance(obj, (int, np.integer)):
+        return int(obj)
+    elif isinstance(obj, np.bool_):
+        return bool(obj)
+    return obj
     
 @worker_process_init.connect
 def setup_models(sender=None, **kwargs):
@@ -95,20 +106,27 @@ def process_swing_video(self, job_id, dtl_video_path, fo_video_path):
         # --- Part 2: Biomechanical Analysis ---
         self.update_state(state='PROCESSING', meta={'status': 'Extracting Metrics...'})
         
-        swing_analyzer = SwingAnalysis(landmarks_dtl=result_dtl_2d, landmarks_fo=result_fo_2d)
+        swing_analyzer = SwingAnalysis(
+            landmarks_dtl=result_dtl_2d, 
+            landmarks_fo=result_fo_2d,
+            dtl_video_path=dtl_video_path,
+            fo_video_path=fo_video_path
+        )
         analysis_results = swing_analyzer.run_full_analysis()
 
         # --- Part 3: Success & Database Update ---
-        # We must serialize numpy data to standard JSON before saving to JSONB
-        sanitized_results = json.loads(json.dumps(analysis_results, cls=NpEncoder))
+        sanitized_results = sanitize_for_json(analysis_results)
+
+        json_string = json.dumps(sanitized_results, allow_nan=False)
+        final_safe_results = json.loads(json_string)
         
-        job.analysis_results = sanitized_results
+        job.analysis_results = final_safe_results
         job.status = "complete"
         db.commit()
         
         print(f"Worker: Job {job_id} completed successfully.")
         _cleanup([dtl_video_path, fo_video_path])
-        return sanitized_results
+        return final_safe_results
 
     except Exception as e:
         # Catch any unexpected crashes (technical errors)

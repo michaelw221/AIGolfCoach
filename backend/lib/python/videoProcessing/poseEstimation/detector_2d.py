@@ -13,6 +13,21 @@ def get_model():
         _POSE_MODEL = YOLO('yolov8s-pose.pt')
     return _POSE_MODEL
 
+def validate_video_file(video_path):
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        return False, "Could not open video file."
+    
+    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    
+    cap.release()
+    
+    if frame_count < 30: # If less than 0.5 seconds of video
+        return False, f"Video is too short or corrupted. Frames detected: {frame_count}"
+        
+    return True, f"Valid video, {frame_count} frames found."
+
 def detect_2d_poses(video_path: str):
     model = _POSE_MODEL
 

@@ -113,15 +113,15 @@ async def analyze_swing_endpoint(
     db.refresh(new_job)
 
     # 3. Save Files
-    dtl_path = os.path.join(TEMP_DIR, f"{job_id}_dtl_{video_file_dtl.filename}")
-    fo_path = os.path.join(TEMP_DIR, f"{job_id}_fo_{video_file_fo.filename}")
+    dtl_path = os.path.join(TEMP_DIR, f"{job_id}_dtl.mp4")
+    fo_path = os.path.join(TEMP_DIR, f"{job_id}_fo.mp4")
 
     try:
         with open(dtl_path, "wb") as buffer:
-            shutil.copyfileobj(video_file_dtl.file, buffer)
-        
+            buffer.write(await video_file_dtl.read())
+            
         with open(fo_path, "wb") as buffer:
-            shutil.copyfileobj(video_file_fo.file, buffer)
+            buffer.write(await video_file_fo.read())
 
         # 4. Trigger Celery Task
         # IMPORTANT: We pass the job_id to the task!

@@ -1,10 +1,14 @@
-from .poseEstimation.detector_2d import detect_2d_poses
+from .poseEstimation.detector_2d import detect_2d_poses, validate_video_file
 from .poseEstimation.lifter_3d import lift_2d_to_3d
 from .preProcessing.viewpoint_validator import validate_viewpoint
 from .preProcessing.stabilizer import stabilize_video
 import os
 
 def run_pose_estimation_pipeline(video_path: str, expected_view: str):
+    is_valid, msg = validate_video_file(video_path)
+    if not is_valid:
+        return {"error": msg}, None
+    
     # --- 1. Stabilization ---
     stab_path = video_path.replace(".mp4", "_stab.mp4")
     stabilize_video(video_path, stab_path)
