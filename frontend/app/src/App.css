@@ -168,7 +168,19 @@ html, body, #root {
 }
 
 /* Layouts */
-.page-container { max-width: 1100px; margin: 2rem auto; padding: 0 1rem; }
+.page-container { 
+  width: 70vw;
+  min-width: 1000px;
+  max-width: 1600px;
+  margin: 2rem auto; 
+  padding: 0 1rem; 
+}
+@media (max-width: 1100px) {
+  .page-container { 
+    width: 95vw; 
+    min-width: auto; 
+  }
+}
 .card { background: var(--card-bg); padding: 2rem; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); border: 1px solid var(--border); }
 
 /* Upload Area */

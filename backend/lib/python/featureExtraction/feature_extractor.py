@@ -170,7 +170,7 @@ class SwingAnalysis:
         thresholds = {
             "sway": 25.37, 
             "spine": 5.06, 
-            "ott": 13.18, # Using handPath threshold for OTT
+            "ott": 43.18, # Using handPath threshold for OTT
             "overSwing": 143.14, 
             "leadArm": 160, 
             "slide": 13.18, 

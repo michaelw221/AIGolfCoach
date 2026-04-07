@@ -26,7 +26,7 @@ def validate_viewpoint(keypoints_2d: np.ndarray):
     ratio = shldr_width / torso_len
     
     # Thresholds (Tuned for standard 16:9 or 4:3 mobile video)
-    if ratio > 0.6:
+    if ratio > 0.5:
         return "Face-On", ratio
     elif ratio < 0.4:
         return "Down-the-Line", ratio
