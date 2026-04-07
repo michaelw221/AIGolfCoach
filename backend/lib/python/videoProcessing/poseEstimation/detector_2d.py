@@ -49,21 +49,25 @@ def detect_2d_poses(video_path: str):
 
         results = model(frame, verbose=False)
         
-        # Check if any results were returned and if the keypoints attribute exists
-        if hasattr(results[0], 'keypoints') and results[0].keypoints.shape[0] > 0:
-            # 1. Get the Keypoints object
-            keypoints_object = results[0].keypoints
+        # Check if keypoints AND bounding boxes exist
+        if hasattr(results[0], 'keypoints') and results[0].keypoints is not None and len(results[0].keypoints.data) > 0:
             
-            # 2. Extract the numerical data. The .data attribute is a PyTorch tensor.
-            #    Move it to the CPU and convert it to a NumPy array.
-            keypoints_data_np = keypoints_object.data.cpu().numpy()
+            # 1. Get all keypoints and all bounding boxes for everyone in the frame
+            kps_data = results[0].keypoints.data.cpu().numpy()  # Shape: (num_people, 17, 3)
+            boxes_data = results[0].boxes.xywh.cpu().numpy()    # Shape: (num_people, 4) -> [x, y, width, height]
             
-            # 3. Select the first person from the batch. The shape is now (17, 3).
-            first_person_keypoints = keypoints_data_np[0]
+            # 2. Calculate the area (width * height) of every person detected
+            areas = boxes_data[:, 2] * boxes_data[:, 3]
             
-            all_frames_keypoints.append(first_person_keypoints)
+            # 3. Find the index of the person with the largest area (The Golfer)
+            largest_person_idx = np.argmax(areas)
+            
+            # 4. Extract ONLY the golfer's keypoints
+            golfer_keypoints = kps_data[largest_person_idx]
+            
+            all_frames_keypoints.append(golfer_keypoints)
         else:
-            # No person was detected. Append a placeholder of the correct shape.
+            # No one detected
             all_frames_keypoints.append(np.zeros((17, 3)))
 
     cap.release()
