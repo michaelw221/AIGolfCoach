@@ -1,54 +1,38 @@
-// src/App.js
 import React, { useState, useEffect } from 'react';
-import UploadForm from './components/uploadForm';
-import ResultsDisplay from './components/resultsDisplay';
-import LoadingSpinner from './components/loadingSpinner';
-import { getToken, removeToken, getAuthHeader } from './services/auth';
-import UserAuth from './components/userAuth';
-import History from './components/history';
 import './App.css';
+import { getToken, removeToken, getAuthHeader } from './services/auth';
+import UserAuth from './components/UserAuth';
+import UploadAnalyze from './components/UploadAnalyze';
+import ResultsView from './components/ResultsView';
+import HistoryView from './components/HistoryView';
+import DashboardView from './components/DashboardView';
+
+const UserIcon = () => (
+  <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+    <circle cx="12" cy="7" r="4"></circle>
+  </svg>
+);
 
 function App() {
-  const [status, setStatus] = useState('Ready to analyze. Please upload both video files.');
-  const [error, setError] = useState(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [isAuth, setIsAuth] = useState(!!getToken());
-  const [view, setView] = useState('upload'); // 'upload' or 'history'
-  const [results, setResults] = useState(null);
+  const [view, setView] = useState('landing'); 
+  const[isAuth, setIsAuth] = useState(!!getToken());
+  const [showDropdown, setShowDropdown] = useState(false);
+  
+  // App State
   const [jobId, setJobId] = useState(null);
+  const [status, setStatus] = useState('');
+  const [results, setResults] = useState(null);
+  const [error, setError] = useState(null);
 
   const handleLogout = () => {
     removeToken();
     setIsAuth(false);
-    setResults(null);
+    setShowDropdown(false);
+    setView('landing');
   };
 
-  const handleSubmit = async (event) => {
-    event.preventDefault();
-    setIsLoading(true);
-    setError(null);
-    setResults(null);
-    setStatus('Uploading and queuing...');
-
-    const formData = new FormData(event.currentTarget);
-    
-    try {
-      const response = await fetch('http://localhost:8000/api/swings', {
-        method: 'POST',
-        headers: getAuthHeader(),
-        body: formData 
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.detail || 'Upload failed');
-      
-      setJobId(data.id);
-      setStatus('Upload complete. Processing in background...');
-    } catch (err) { 
-      setError(err.message);
-      setIsLoading(false);
-    }
-  };
-
+  // --- API Polling Logic ---
   useEffect(() => {
     if (!jobId) return;
 
@@ -60,19 +44,23 @@ function App() {
         const data = await response.json();
 
         if (data.status === 'complete') {
-          setResults(data.analysis_results); 
+          setResults(data.analysis_results);
           setStatus('Analysis complete!');
-          setIsLoading(false);
+          setView('results');
           setJobId(null);
           clearInterval(intervalId);
         } else if (data.status === 'failed') {
           setError(data.error_message || "A technical error occurred.");
           setStatus('Analysis failed.');
-          setIsLoading(false);
           setJobId(null);
           clearInterval(intervalId);
         } else {
-          setStatus(`Processing... (Status: ${data.status})`);
+          if (data.analysis_results && data.analysis_results.progress) {
+            setResults(data.analysis_results);
+            setStatus(data.analysis_results.message); 
+          } else {
+            setStatus(`Processing... (${data.status})`);
+          }
         }
       } catch (err) {
         console.error("Polling error:", err);
@@ -80,39 +68,84 @@ function App() {
     }, 2000);
 
     return () => clearInterval(intervalId);
-  }, [jobId]);
-
-  if (!isAuth) return <UserAuth onLoginSuccess={() => setIsAuth(true)} />;
+  },[jobId]);
 
   return (
-    <main className="container">
-      <nav>
-        <ul><li><strong>AI Golf Coach</strong></li></ul>
-        <ul>
-          <li><button className="contrast" onClick={() => {setView('upload'); setResults(null); setError(null);}}>New Analysis</button></li>
-          <li><button className="secondary" onClick={() => setView('history')}>History</button></li>
-          <li><button className="outline" onClick={handleLogout}>Logout</button></li>
-        </ul>
+    <div>
+      <nav className="navbar">
+        <div className="nav-logo" onClick={() => setView('landing')}>AI Golf Coach</div>
+        
+        <div className="nav-actions">
+          {(view !== 'auth' && view !== 'landing') && (
+            <button className="btn-dark" onClick={() => { setView('analyze'); setResults(null); setError(null); }}>
+              New Analysis
+            </button>
+          )}
+
+          {isAuth ? (
+            // LOGGED IN: Show User Icon with Dropdown
+            <div className="nav-dropdown-btn icon-btn" onClick={() => setShowDropdown(!showDropdown)}>
+              <UserIcon />
+              
+              {showDropdown && (
+                <ul className="dropdown-menu">
+                  <li onClick={() => { setView('dashboard'); setShowDropdown(false); }}>Account</li>
+                  <li onClick={() => { setView('history'); setShowDropdown(false); }}>History</li>
+                  <li onClick={handleLogout} style={{ color: 'var(--error)' }}>Logout</li>
+                </ul>
+              )}
+            </div>
+          ) : (
+            // LOGGED OUT: Show simple button
+            view !== 'auth' && (
+              <button className="btn-outline" onClick={() => setView('auth')}>
+                Login / Register
+              </button>
+            )
+          )}
+        </div>
       </nav>
 
-      {view === 'upload' ? (
-        <>
-          {!results && !isLoading && <UploadForm handleSubmit={handleSubmit} isLoading={isLoading} />}
-          
-          {isLoading && <LoadingSpinner status={status} />}
-          
-          {(results || error) && (
-            <ResultsDisplay status={status} results={results} error={error} />
-          )}
-        </>
-      ) : (
-        <History onSelectJob={(id) => { 
-          setJobId(id); 
-          setIsLoading(true); // Trigger loading while it fetches the history item
-          setView('upload'); 
-        }} />
-      )}
-    </main>
+      <div className="page-container">
+        {/* Error Banner */}
+        {error && (
+          <div style={{ padding: '1rem', background: '#fee2e2', color: '#b91c1c', borderRadius: '8px', marginBottom: '1rem' }}>
+            <strong>Error:</strong> {error}
+          </div>
+        )}
+
+        {view === 'landing' && (
+          <div style={{ textAlign: 'center', marginTop: '10vh' }}>
+            <div className="card" style={{ maxWidth: '600px', margin: '0 auto 2rem auto', padding: '4rem 2rem' }}>
+              <h1 style={{ fontSize: '2.5rem', marginBottom: '1rem', color: 'var(--primary)' }}>Welcome to your<br/>AI Golf Coach</h1>
+              <p style={{ color: 'var(--text-light)', marginBottom: '2rem' }}>Upload your swing and get instant biomechanical feedback.</p>
+              <button className="btn-accent" style={{ fontSize: '1.2rem', padding: '1rem 3rem' }} onClick={() => setView('analyze')}>
+                Run Analysis
+              </button>
+            </div>
+            {!isAuth && <p style={{ color: 'var(--text-light)' }}>Want to save your history? <a href="#" onClick={(e) => {e.preventDefault(); setView('auth');}}>Create an account</a></p>}
+          </div>
+        )}
+
+        {view === 'auth' && <UserAuth onLogin={() => { setIsAuth(true); setView('analyze'); }} />}
+        
+        {view === 'analyze' && <UploadAnalyze setJobId={setJobId} setStatus={setStatus} setError={setError} status={status} jobId={jobId} results={results} />}
+        
+        {view === 'results' && <ResultsView results={results} />}
+
+        {view === 'history' && (
+          <HistoryView 
+            onViewResults={(savedResults) => {
+              setResults(savedResults);
+              setError(null);
+              setView('results');
+            }}
+          />
+        )}
+
+        {view === 'dashboard' && <DashboardView isActive={view === 'dashboard'} />}
+      </div>
+    </div>
   );
 }
 
