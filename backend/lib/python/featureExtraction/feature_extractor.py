@@ -1,7 +1,9 @@
 import numpy as np
 import cv2
 import base64
+import os
 from .. import utils # Import from our new module
+from .drill_db import DRILL_DATA
 
 # Define keypoint indices provided by YoloV8 documentation
 NOSE = 0
@@ -23,31 +25,65 @@ LEFT_ANKLE = 15
 RIGHT_ANKLE = 16
 
 class SwingAnalysis:
-    def __init__(self, landmarks_dtl, landmarks_fo, dtl_video_path, fo_video_path):
+    def __init__(self, landmarks_dtl_2d, landmarks_fo_2d, landmarks_dtl_3d, dtl_video_path, fo_video_path):
         """
         Initializes the analysis object with landmark data from both views.
         """
-        if landmarks_dtl is None or landmarks_fo is None:
+        if landmarks_dtl_2d is None or landmarks_fo_2d is None:
             raise ValueError("Both DTL and FO landmark arrays are required.")
         
-        self.landmarks_dtl = self._clean_landmarks(landmarks_dtl)
-        self.landmarks_fo = self._clean_landmarks(landmarks_fo)
+        self.landmarks_dtl_2d = self._clean_landmarks(landmarks_dtl_2d)
+        self.landmarks_fo_2d = self._clean_landmarks(landmarks_fo_2d)
+        self.landmarks_dtl_3d = self._clean_landmarks(landmarks_dtl_3d)
         self.dtl_path = dtl_video_path
         self.fo_path = fo_video_path
         
-        self.key_frames_dtl = self._find_key_frames(self.landmarks_dtl, "DTL")
-        self.key_frames_fo = self._find_key_frames(self.landmarks_fo, "FO")
+        self.key_frames_dtl = self._find_key_frames(self.landmarks_dtl_2d, "DTL")
+        self.key_frames_fo = self._find_key_frames(self.landmarks_fo_2d, "FO")
 
-    def _get_frame_as_base64(self, video_path, frame_idx, landmarks):
+    def _extract_phase_images(self, video_path, key_frames_dict, landmarks):
+        """
+        Reads the video ONCE sequentially to extract the 3 key frames perfectly.
+        This bypasses the OpenCV frame-skipping bugs on Windows.
+        """
+        if not video_path or not os.path.exists(video_path):
+            return {"address": None, "top": None, "impact": None}
+
+        # Map the frame index to its phase name (e.g., {58: 'address', 140: 'top'})
+        targets = {
+            key_frames_dict['address']: 'address',
+            key_frames_dict['top']: 'top',
+            key_frames_dict['impact']: 'impact'
+        }
+        max_frame_needed = max(targets.keys())
+        
+        extracted_images = {}
         cap = cv2.VideoCapture(video_path)
-        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
-        success, frame = cap.read()
+        
+        current_frame = 0
+        while cap.isOpened() and current_frame <= max_frame_needed:
+            success, frame = cap.read()
+            if not success:
+                break
+                
+            # If the current frame is one of our key frames, draw the skeleton and save it
+            if current_frame in targets:
+                phase_name = targets[current_frame]
+                annotated = utils.draw_skeleton(frame, landmarks[current_frame])
+                
+                _, buffer = cv2.imencode('.jpg', annotated)
+                b64_str = base64.b64encode(buffer).decode('utf-8')
+                extracted_images[phase_name] = b64_str
+                
+            current_frame += 1
+            
         cap.release()
-        if success:
-            annotated = utils.draw_skeleton(frame, landmarks[frame_idx, :, :2])
-            _, buffer = cv2.imencode('.jpg', annotated)
-            return base64.b64encode(buffer).decode('utf-8')
-        return None
+
+        for phase in ['address', 'top', 'impact']:
+            if phase not in extracted_images:
+                extracted_images[phase] = None
+                
+        return extracted_images
 
     def run_full_analysis(self):
         """
@@ -62,18 +98,16 @@ class SwingAnalysis:
 
         debug_images = {"dtl": {}, "fo": {}}
         
-        # Capture DTL frames
-        for phase in ['address', 'top', 'impact']:
-            debug_images['dtl'][phase] = self._get_frame_as_base64(self.dtl_path, self.key_frames_dtl[phase], self.landmarks_dtl)
-        
-        # Capture FO frames
-        for phase in ['address', 'top', 'impact']:
-            debug_images['fo'][phase] = self._get_frame_as_base64(self.fo_path, self.key_frames_fo[phase], self.landmarks_fo)
+        debug_images = {
+            "dtl": self._extract_phase_images(self.dtl_path, self.key_frames_dtl, self.landmarks_dtl_2d),
+            "fo": self._extract_phase_images(self.fo_path, self.key_frames_fo, self.landmarks_fo_2d)
+        }
 
         return {
             "key_frames": {"dtl": self.key_frames_dtl, "fo": self.key_frames_fo},
             "metrics": metrics,
             "diagnosed_faults": faults,
+            "keypoints_3d": self.landmarks_dtl_3d.tolist(),
             "debug_images": debug_images
         }
 
@@ -99,11 +133,11 @@ class SwingAnalysis:
         """Calculates metrics using DTL key frames."""
         kf = self.key_frames_dtl
         
-        spine_addr = self._get_spine_angle(self.landmarks_dtl[kf['address']])
-        spine_impact = self._get_spine_angle(self.landmarks_dtl[kf['impact']])
-        knee_addr = self._get_knee_angle(self.landmarks_dtl[kf['address']], LEFT_HIP, LEFT_KNEE, LEFT_ANKLE)
-        knee_impact = self._get_knee_angle(self.landmarks_dtl[kf['impact']], LEFT_HIP, LEFT_KNEE, LEFT_ANKLE)
-        hand_path = self._get_hand_path_angle(self.landmarks_dtl, kf['address'], kf['top'], kf['impact'])
+        spine_addr = self._get_spine_angle(self.landmarks_dtl_2d[kf['address']])
+        spine_impact = self._get_spine_angle(self.landmarks_dtl_2d[kf['impact']])
+        knee_addr = self._get_knee_angle(self.landmarks_dtl_2d[kf['address']], LEFT_HIP, LEFT_KNEE, LEFT_ANKLE)
+        knee_impact = self._get_knee_angle(self.landmarks_dtl_2d[kf['impact']], LEFT_HIP, LEFT_KNEE, LEFT_ANKLE)
+        hand_path = self._get_hand_path_angle(self.landmarks_dtl_2d, kf['address'], kf['top'], kf['impact'])
 
         return {
             "spine_angle_change_at_impact": spine_addr - spine_impact,
@@ -115,11 +149,11 @@ class SwingAnalysis:
         """Calculates metrics using FO key frames."""
         kf = self.key_frames_fo
         
-        head_sway = self._get_head_sway(self.landmarks_fo, kf['address'], kf['top'])
-        backswing_len = self._get_backswing_length(self.landmarks_fo, kf['top'])
-        impact_arm_angle = self._get_lead_arm_angle_at_impact(self.landmarks_fo, kf['impact'])
-        hip_slide = self._get_hip_slide(self.landmarks_fo, kf['address'], kf['impact'])
-        x_factor = self._get_x_factor(self.landmarks_fo, kf['address'], kf['top'])
+        head_sway = self._get_head_sway(self.landmarks_fo_2d, kf['address'], kf['top'])
+        backswing_len = self._get_backswing_length(self.landmarks_fo_2d, kf['top'])
+        impact_arm_angle = self._get_lead_arm_angle_at_impact(self.landmarks_fo_2d, kf['impact'])
+        hip_slide = self._get_hip_slide(self.landmarks_fo_2d, kf['address'], kf['impact'])
+        x_factor = self._get_x_factor(self.landmarks_fo_2d, kf['address'], kf['top'])
         
         return {
             "max_head_sway_cm": head_sway,
@@ -130,58 +164,135 @@ class SwingAnalysis:
         }
 
     def _diagnose_faults(self, metrics):
-        """Runs the rule engine based on the calculated metrics."""
-        faults = []
-        if metrics.get("spine_angle_change_at_impact", 0) > 5.06:
-            faults.append({
+        """Runs the rule engine, calculates severity, and selects exactly 3 drills."""
+        detected_faults = []
+
+        thresholds = {
+            "sway": 25.37, 
+            "spine": 5.06, 
+            "ott": 13.18, # Using handPath threshold for OTT
+            "overSwing": 143.14, 
+            "leadArm": 160, 
+            "slide": 13.18, 
+            "xFactor": 9.12, 
+            "knee": 5.06
+        }
+        
+        # 1. Early Extension
+        spine_val = abs(metrics.get("spine_angle_change_at_impact", 0))
+        if spine_val > thresholds["spine"]:
+            detected_faults.append({
                 "name": "Early Extension (Loss of Posture)",
-                "detail": f"Your spine angle increased by {metrics.get('spine_angle_change_at_impact', 0):.1f} degrees at impact."
+                "severity": spine_val / thresholds["spine"],
+                "detail": f"Spine angle changed by {spine_val:.1f}°."
             })
             
-        if metrics.get("max_head_sway_cm", 0) > 25.37:
-            faults.append({
-                "name": "Sway",
-                "detail": f"Your head moved laterally by {metrics.get('max_head_sway_cm', 0):.1f} cm during the backswing."
+        # 2. Sway
+        sway_val = metrics.get("max_head_sway_cm", 0)
+        if sway_val > thresholds["sway"]:
+            detected_faults.append({
+                "name": "Sway", 
+                "severity": sway_val / thresholds["sway"], 
+                "detail": f"Head moved {sway_val:.1f}cm laterally."
             })
             
-        if metrics.get("backswing_length_angle", 0) > 143.14:
-            faults.append({
+        # 3. Over-swinging
+        backswing_angle = metrics.get("backswing_length_angle", 0)
+        if backswing_angle > thresholds["overSwing"]:
+            detected_faults.append({
                 "name": "Over-swinging",
-                "detail": f"Your lead arm went to {metrics.get('backswing_length_angle', 0):.1f} degrees, which is past parallel."
+                "severity": backswing_angle / thresholds["overSwing"],
+                "detail": f"Backswing reached {backswing_angle:.1f}° (past parallel)."
             })
             
-        if metrics.get("lead_arm_angle_impact", 180) < 160:
-            faults.append({
+        # 4. Chicken Wing (Lower is worse)
+        arm_angle = metrics.get("lead_arm_angle_impact", 180)
+        if arm_angle < thresholds["leadArm"]:
+            # Severity = Threshold / Value (e.g., 160/140 = 1.14 severity)
+            detected_faults.append({
                 "name": "Bent Lead Arm at Impact (Chicken Wing)",
-                "detail": f"Your lead arm was bent to {metrics.get('lead_arm_angle_impact', 180):.1f} degrees at impact."
+                "severity": thresholds["leadArm"] / max(arm_angle, 1), 
+                "detail": f"Lead arm was bent to {arm_angle:.1f}° at impact."
             })
 
-        if metrics.get("max_hip_slide_cm", 0) > 13.18:
-            faults.append({
+        # 5. Excessive Slide
+        slide_val = metrics.get("max_hip_slide_cm", 0)
+        if slide_val > thresholds["slide"]:
+            detected_faults.append({
                 "name": "Excessive Slide", 
-                "detail": "Hips moved too far toward the target, preventing rotation."
+                "severity": slide_val / thresholds["slide"],
+                "detail": f"Hips slid {slide_val:.1f}cm toward target."
             })
 
-        if metrics.get("x_factor_angle", 0) < 9.12:
-            faults.append({
+        # 6. Poor Separation (Lower is worse)
+        x_factor = metrics.get("x_factor_angle", 0)
+        if x_factor < thresholds["xFactor"]:
+            detected_faults.append({
                 "name": "Poor Separation", 
-                "detail": "Hips and shoulders turned together. Work on X-Factor."
+                "severity": thresholds["xFactor"] / max(x_factor, 1),
+                "detail": "Hips and shoulders turned together; needs more X-Factor."
             })
 
-        if metrics.get("knee_flex_change", 0) > 5.06:
-            faults.append({
+        # 7. Loss of Knee Flex
+        knee_val = abs(metrics.get("knee_flex_change", 0))
+        if knee_val > thresholds["knee"]:
+            detected_faults.append({
                 "name": "Loss of Knee Flex", 
-                "detail": "Your lead leg straightened too much, causing you to stand up."
+                "severity": knee_val / thresholds["knee"],
+                "detail": f"Knee angle changed by {knee_val:.1f}°."
             })
 
-        hand_angle = metrics.get("initial_hand_path_angle", 0)
-        if hand_angle > 13.18:
-            faults.append({
+        # 8. Over the Top
+        hand_angle = abs(metrics.get("initial_hand_path_angle", 0))
+        if hand_angle > thresholds["ott"]:
+            detected_faults.append({
                 "name": "Over the Top", 
-                "detail": f"Your hands moved outward toward the ball at a {hand_angle:.1f}° angle instead of dropping straight down."
+                "severity": hand_angle / thresholds["ott"],
+                "detail": f"Hands moved outward at {hand_angle:.1f}° over the plane."
             })
-            
-        return faults
+
+        detected_faults = sorted(detected_faults, key=lambda x: x['severity'], reverse=True)
+        
+        recommended_drills = self._select_top_drills(detected_faults)
+        
+        return {
+            "faults": detected_faults,
+            "recommended_drills": recommended_drills
+        }
+
+    def _select_top_drills(self, faults):
+        """Logic to select exactly 3 YouTube videos based on fault severity."""
+        from .drill_db import DRILL_DATA # Your dictionary of YT links
+        
+        num_detected = len(faults)
+        
+        # Case 0: No faults found
+        if num_detected == 0:
+            return DRILL_DATA["General Improvement"][:3]
+
+        # Case 1: 1 fault found -> 3 videos for that fault
+        if num_detected == 1:
+            return DRILL_DATA.get(faults[0]['name'], DRILL_DATA["General Improvement"])[:3]
+
+        # Case 2: 2 faults found -> 2 for the most severe, 1 for the second
+        if num_detected == 2:
+            drill_1 = DRILL_DATA.get(faults[0]['name'], [])
+            drill_2 = DRILL_DATA.get(faults[1]['name'], [])
+            return drill_1[:2] + drill_2[:1]
+
+        # Case 3: 3+ faults found
+        if num_detected >= 3:
+            # If the #1 fault is 50% more severe than the #2 fault, prioritize it
+            if faults[0]['severity'] > (faults[1]['severity'] * 1.5):
+                drill_1 = DRILL_DATA.get(faults[0]['name'], [])
+                drill_2 = DRILL_DATA.get(faults[1]['name'], [])
+                return drill_1[:2] + drill_2[:1]
+            else:
+                # Balanced: 1 video for each of the top 3 most severe faults
+                drill_1 = DRILL_DATA.get(faults[0]['name'], [])
+                drill_2 = DRILL_DATA.get(faults[1]['name'], [])
+                drill_3 = DRILL_DATA.get(faults[2]['name'], [])
+                return drill_1[:1] + drill_2[:1] + drill_3[:1]
 
     def _get_spine_angle(self, landmarks_frame):
         # Explicitly slice [:2] to ignore the confidence score

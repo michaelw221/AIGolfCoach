@@ -11,7 +11,7 @@ import db.schemas as schemas
 import os
 import sys
 import uuid
-import shutil
+from typing import Optional
 
 # --- 1. SETUP PATHS FOR VIDEOPOSE3D ---
 try:
@@ -92,13 +92,36 @@ def create_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
     db.refresh(new_user)
     return new_user
 
+@app.get("/api/users/me", response_model=schemas.UserResponse)
+def read_users_me(current_user: models.User = Depends(get_current_user)):
+    """Returns the currently logged-in user's details."""
+    return current_user
+
+@app.put("/api/users/me/password")
+def update_password(
+    password_data: schemas.PasswordUpdate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """Verifies the current password and updates it with a new hash."""
+    # 1. Verify the current password is correct
+    if not verify_password(password_data.current_password, current_user.hashed_password):
+        raise HTTPException(status_code=400, detail="Incorrect current password")
+    
+    # 2. Hash the new password and update the user
+    current_user.hashed_password = get_password_hash(password_data.new_password)
+    
+    # 3. Save to database
+    db.commit()
+    return {"message": "Password updated successfully"}
+
 # --- SWING ANALYSIS ENDPOINTS ---
 @app.post("/api/swings", response_model=schemas.SwingJobResponse, status_code=status.HTTP_202_ACCEPTED)
 async def analyze_swing_endpoint(
     video_file_dtl: UploadFile = File(...),
     video_file_fo: UploadFile = File(...),
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user) # NOW PROTECTED
+    current_user: Optional[models.User] = Depends(get_current_user) # NOW PROTECTED
 ):
     job_id = str(uuid.uuid4())
     

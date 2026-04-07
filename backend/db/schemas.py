@@ -18,6 +18,10 @@ class UserResponse(BaseModel):
     class Config:
         from_attributes = True
 
+class PasswordUpdate(BaseModel):
+    current_password: str
+    new_password: str
+
 # --- SWING JOB SCHEMAS ---
 class SwingJobResponse(BaseModel):
     id: str

@@ -94,12 +94,15 @@ def preprocess_2d_data(keypoints_2d_sequence: np.ndarray, video_resolution: tupl
     """
     print("-> Pre-processing 2D data for 3D lifting...")
 
-    # --- Step 1: Normalize screen coordinates ---
-    keypoints_xy = keypoints_2d_sequence[:, :, :2]
+    keypoints_xy = np.copy(keypoints_2d_sequence[:, :, :2])
     w, h = video_resolution
-    normalized_keypoints = utils.normalize_screen_coordinates(keypoints_xy, w=w, h=h)
+    
+    keypoints_xy[:, :, 0] = keypoints_xy[:, :, 0] - (w / 2)
+    keypoints_xy[:, :, 1] = keypoints_xy[:, :, 1] - (h / 2)
 
-    # --- Step 2: Create temporal chunks ---
+    scale = max(w, h) / 2.0
+    normalized_keypoints = keypoints_xy / scale
+
     input_tensor = create_temporal_chunks(normalized_keypoints, RECEPTIVE_FIELD)
     
     print("-> Pre-processing complete.")
@@ -116,18 +119,20 @@ def run_inference(preprocessed_2d_tensor: torch.Tensor):
         np.ndarray: The predicted 3D pose sequence.
     """
     model = _MODEL_3D
-    # Ensure the input tensor is on the same device as the model (CPU or GPU)
+    if model is None:
+        raise RuntimeError("VideoPose3D model failed to load. Check checkpoint path.")
+        
     input_tensor = preprocessed_2d_tensor.to(device)
 
-    # Run inference inside a no_grad() block for efficiency
     with torch.no_grad():
         predicted_3d_poses = model(input_tensor)
 
-    # The model's output is on the GPU, move it back to the CPU for NumPy conversion
-    poses_cpu = predicted_3d_poses.cpu().numpy()
+    poses_cpu = predicted_3d_poses.cpu().numpy().squeeze(0)
+
+    root_positions = poses_cpu[:, 0:1, :]  # Shape: (frames, 1, 3)
+    poses_cpu = poses_cpu - root_positions
     
-    # The model output is a batch of one. We remove the batch dimension.
-    return poses_cpu.squeeze(0)
+    return poses_cpu
 
 def lift_2d_to_3d(keypoints_2d_sequence: np.ndarray, video_resolution: tuple):
     """

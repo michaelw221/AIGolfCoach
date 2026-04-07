@@ -5,6 +5,7 @@ import numpy as np
 import math
 from pathlib import Path
 from celery.signals import worker_process_init
+from sqlalchemy.orm.attributes import flag_modified
 
 # --- Path Setup ---
 current_file = Path(__file__).resolve()
@@ -71,6 +72,19 @@ def setup_models(sender=None, **kwargs):
     except Exception as e:
         print(f"[Worker Init] Error loading models: {e}")
 
+def _update_progress(db, job, progress_pct, message, debug_images=None):
+    """Updates the database with live progress so the frontend can read it."""
+    job.analysis_results = {
+        "progress": progress_pct,
+        "message": message,
+        "debug_images": debug_images
+    }
+    
+    flag_modified(job, "analysis_results") 
+    
+    db.commit()
+    db.refresh(job)
+
 @celery_app.task(bind=True)
 def process_swing_video(self, job_id, dtl_video_path, fo_video_path):
     """
@@ -87,6 +101,7 @@ def process_swing_video(self, job_id, dtl_video_path, fo_video_path):
             return
 
         # --- Part 1: Pose Estimation & Validation ---
+        _update_progress(db, job, 10, "Extracting 2D skeleton from Down-the-Line video...")
         self.update_state(state='PROCESSING', meta={'status': 'Validating DTL video...'})
         result_dtl_2d, result_dtl_3d= run_pose_estimation_pipeline(dtl_video_path, "Down-the-Line")
         
@@ -95,6 +110,7 @@ def process_swing_video(self, job_id, dtl_video_path, fo_video_path):
             _handle_failure(db, job, result_dtl_2d["error"], [dtl_video_path, fo_video_path])
             return
 
+        _update_progress(db, job, 40, "Extracting 2D skeleton from Face-On video...")
         self.update_state(state='PROCESSING', meta={'status': 'Validating FO video...'})
         result_fo_2d, result_fo_3d = run_pose_estimation_pipeline(fo_video_path, "Face-On")
 
@@ -105,13 +121,21 @@ def process_swing_video(self, job_id, dtl_video_path, fo_video_path):
 
         # --- Part 2: Biomechanical Analysis ---
         self.update_state(state='PROCESSING', meta={'status': 'Extracting Metrics...'})
-        
+        _update_progress(db, job, 70, "Detecting Key Frames (Address, Top, Impact)...")
         swing_analyzer = SwingAnalysis(
-            landmarks_dtl=result_dtl_2d, 
-            landmarks_fo=result_fo_2d,
+            landmarks_dtl_2d=result_dtl_2d, 
+            landmarks_fo_2d=result_fo_2d,
+            landmarks_dtl_3d=result_fo_3d,
             dtl_video_path=dtl_video_path,
             fo_video_path=fo_video_path
         )
+
+        debug_images = {
+            "dtl": swing_analyzer._extract_phase_images(dtl_video_path, swing_analyzer.key_frames_dtl, swing_analyzer.landmarks_dtl_2d),
+            "fo": swing_analyzer._extract_phase_images(fo_video_path, swing_analyzer.key_frames_fo, swing_analyzer.landmarks_fo_2d)
+        }
+
+        _update_progress(db, job, 85, "Calculating 3D Biomechanical Metrics...", debug_images)
         analysis_results = swing_analyzer.run_full_analysis()
 
         # --- Part 3: Success & Database Update ---
