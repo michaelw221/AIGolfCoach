@@ -169,8 +169,8 @@ class SwingAnalysis:
 
         thresholds = {
             "sway": 25.37, 
-            "spine": 5.06, 
-            "ott": 43.18, # Using handPath threshold for OTT
+            "spine": 2, 
+            "ott": 43.18,
             "overSwing": 143.14, 
             "leadArm": 160, 
             "slide": 13.18, 
@@ -262,7 +262,7 @@ class SwingAnalysis:
 
     def _select_top_drills(self, faults):
         """Logic to select exactly 3 YouTube videos based on fault severity."""
-        from .drill_db import DRILL_DATA # Your dictionary of YT links
+        from .drill_db import DRILL_DATA
         
         num_detected = len(faults)
         

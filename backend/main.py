@@ -54,8 +54,13 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 def get_password_hash(password):
     return pwd_context.hash(password)
 
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/auth/login", auto_error=False)
+
 # --- AUTH DEPENDENCY ---
 async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+    if not token:
+        return None
+     
     credentials_exception = HTTPException(status_code=401, detail="Could not validate credentials")
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
@@ -121,7 +126,7 @@ async def analyze_swing_endpoint(
     video_file_dtl: UploadFile = File(...),
     video_file_fo: UploadFile = File(...),
     db: Session = Depends(get_db),
-    current_user: Optional[models.User] = Depends(get_current_user) # NOW PROTECTED
+    current_user: Optional[models.User] = Depends(get_current_user)
 ):
     job_id = str(uuid.uuid4())
     
@@ -129,7 +134,7 @@ async def analyze_swing_endpoint(
     new_job = models.SwingJob(
         id=job_id,
         status="pending",
-        user_id=current_user.id # Sarah now owns this swing!
+        user_id=current_user.id
     )
     db.add(new_job)
     db.commit()
@@ -162,7 +167,6 @@ async def analyze_swing_endpoint(
         raise HTTPException(status_code=500, detail=str(e))
 
     # 5. Return the Job Object
-    # The frontend will use the 'id' from this object to poll GET /api/swings/{id}
     return new_job 
 
 @app.get("/api/swings/{job_id}", response_model=schemas.SwingJobResponse)
