@@ -1,107 +1,134 @@
-# AIGolfCoach
-**Step 1: Clone the Repository**
-Open your terminal or command prompt and navigate to the directory where you want to store the project. Then, run the following command:
-```bash
-git clone <your-github-repository-url.git>
-cd AIGOLFCOACH
+### Part 1: The `docker-compose.yml` file
+
+First, create a new file in the **root directory of your project** (the same level as your `backend` and `frontend` folders) and name it `docker-compose.yml`. Paste the following code into it. This file defines your PostgreSQL and Redis services.
+
+```yaml
+version: '3.8'
+
+services:
+  # PostgreSQL Database Service
+  postgres_db:
+    image: postgres:15-alpine
+    container_name: aigc_postgres
+    environment:
+      POSTGRES_DB: aigolfcoach
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: your_secure_password # <-- CHANGE THIS if you want
+    ports:
+      - "5433:5432" # Maps port 5433 on your machine to 5432 in the container
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  # Redis Message Broker Service
+  redis_broker:
+    image: redis:7-alpine
+    container_name: aigc_redis
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
 ```
 
-**Step 2: Set Up the Python Backend**
-This will create an isolated virtual environment for all the Python packages.
+### Part 2: The `.env.example` file
 
-1.  Navigate into the `backend` directory:
+To make configuration easy, create a new file inside your `backend` folder called `.env.example`. This acts as a template for the required environment variables.
+
+```
+# backend/.env.example
+
+# PostgreSQL Connection URL
+# Format: postgresql://[USER]:[PASSWORD]@[HOST]:[PORT]/[DB_NAME]
+# This MUST match the environment variables in your docker-compose.yml
+DATABASE_URL=postgresql://postgres:your_secure_password@localhost:5433/aigolfcoach
+
+# Secret key for signing JWT tokens
+SECRET_KEY=a-very-secret-string-for-jwt-tokens
+```
+
+### Part 3: The `README.md` Update
+
+Now, add the following section to your project's main `README.md` file. It explains how to use the files we just created.
+
+```markdown
+# AI Golf Coach
+
+The AI Golf Coach is a full-stack web application designed to provide amateur golfers with detailed biomechanical analysis of their swing using advanced computer vision and deep learning techniques.
+
+---
+
+## Local Development Setup
+
+This project utilizes Docker to manage its backend services (PostgreSQL and Redis) to ensure a consistent and reliable development environment.
+
+### Prerequisites
+
+-   [Docker Desktop](https://www.docker.com/products/docker-desktop/) installed and running.
+-   Python 3.11+ and `pip`.
+-   Node.js 18+ and `npm`.
+
+### Installation & Setup
+
+1.  **Clone the Repository**
+    ```bash
+    git clone https://github.com/michaelw221/AIGolfCoach.git
+    cd AIGolfCoach
+    ```
+
+2.  **Configure Environment Variables**
+    Navigate to the `backend` directory, copy the example environment file, and update it with your database password.
+
     ```bash
     cd backend
+    cp .env.example .env
     ```
-    2.  Create a Python virtual environment:
+    Open the newly created `.env` file and ensure the `DATABASE_URL` password matches the `POSTGRES_PASSWORD` you set in the `docker-compose.yml` file.
+
+3.  **Launch Backend Services**
+    From the **root directory** of the project, run the following command to start the PostgreSQL and Redis containers in the background:
+
     ```bash
-    # On Windows
+    docker compose up -d
+    ```
+    This will download the necessary images and start the services. You can verify they are running in Docker Desktop.
+
+4.  **Setup the Backend (Python)**
+    Navigate into the `backend` folder, create a virtual environment, and install the required Python packages.
+
+    ```bash
+    # From the /backend directory
     python -m venv .venv
-
-    # On macOS / Linux
-    python3 -m venv .venv
-    ```
-3.  Activate the virtual environment:
-    ```bash
-    # On Windows
-    .venv\Scripts\activate
-
-    # On macOS / Linux
-    source .venv/bin/activate
-    ```
-    *(Your terminal prompt should now start with `(.venv)`)*
-
-4.  Install the required Python packages:
-    ```bash
+    source .venv/bin/activate  # On Windows, use: .\.venv\Scripts\activate
     pip install -r requirements.txt
     ```
 
-**Step 3: Set Up the React Frontend**
-This will install all the necessary Node.js packages.
+5.  **Setup the Frontend (React)**
+    In a separate terminal, navigate into the `frontend` folder and install the Node.js packages.
 
-1.  Navigate from the project root into the `frontend/app` directory. **Open a new, separate terminal for this step.**
     ```bash
-    cd frontend/app
-    ```
-2.  Install the required Node packages:
-    ```bash
+    cd frontend
     npm install
     ```
-    *(This may take a few minutes as it downloads all the React dependencies.)*
 
----
+### Running the Application
 
-#### **3. Running the Application (For Daily Development)**
+To run the full application, you need to start three separate processes in three different terminals:
 
-To run the application, you will need **two separate terminals** running concurrently.
-
-**Terminal 1: Start the Backend Server**
-
-1.  Navigate to the `backend` directory.
-2.  Activate the virtual environment if it's not already active:
-    ```bash
-    .venv\Scripts\activate
-    ```
-3.  Start the Uvicorn server:
+1.  **Start the FastAPI Backend API** (Terminal 1, in `/backend`)
     ```bash
     uvicorn main:app --reload
     ```
-4.  You should see a confirmation that the server is running on **http://127.0.0.1:8000**. Leave this terminal running.
 
-**Terminal 2: Start the Frontend Server**
+2.  **Start the Celery Worker** (Terminal 2, in `/backend`)
+    ```bash
+    celery -A worker.celery_config worker --loglevel=info --pool=solo
+    ```
 
-1.  Navigate to the `frontend/app` directory.
-2.  Start the React development server:
+3.  **Start the React Frontend** (Terminal 3, in `/frontend`)
     ```bash
     npm start
     ```
-3.  A new browser tab should automatically open to **http://localhost:3000**. If it doesn't, you can open it manually. You should see your application's UI.
 
-You are now ready to use the application.
-
----
-
-#### **4. Accessing the Application**
-
-*   **Frontend UI:** Open your browser and go to **http://localhost:3000**. This is where you will interact with the application.
-*   **Backend API Docs (Optional):** You can see the auto-generated API documentation by navigating to **http://localhost:8000/docs**. This is useful for testing the API directly.
-
----
-
-#### **5. Common Troubleshooting**
-
-*   **Error: `uvicorn: command not found`**
-    *   **Cause:** The Python virtual environment is not active in your backend terminal.
-    *   **Fix:** Run the activation command (`.venv\Scripts\activate` or `source .venv/bin/activate`).
-
-*   **Error: `npm: command not found` or `npx: command not found`**
-    *   **Cause:** Node.js is not installed correctly or was installed without adding it to your system's PATH.
-    *   **Fix:** Reinstall the **LTS version of Node.js** from [nodejs.org](https://nodejs.org/) and ensure you restart your terminal and VS Code.
-
-*   **Error in Browser Console: `CORS policy` error, `Failed to fetch`**
-    *   **Cause:** The backend server is not running, or the `apiUrl` in your React code is pointing to the wrong address/port.
-    *   **Fix:** Ensure the backend terminal is running and shows that Uvicorn is active on `http://127.0.0.1:8000`.
-
-*   **Error: `ModuleNotFoundError` in the backend terminal**
-    *   **Cause:** The Python packages were not installed correctly.
-    *   **Fix:** Make sure your virtual environment is active and run `pip install -r requirements.txt` again in the `backend` directory.
+You can now access the web application at **http://localhost:3000**.
