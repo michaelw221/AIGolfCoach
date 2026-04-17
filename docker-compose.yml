@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database Service
+  postgres_db:
+    image: postgres:15-alpine
+    container_name: aigc_postgres
+    environment:
+      POSTGRES_DB: aigolfcoach
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: your_secure_password # <-- CHANGE THIS if you want
+    ports:
+      - "5433:5432" # Maps port 5433 on your machine to 5432 in the container
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  # Redis Message Broker Service
+  redis_broker:
+    image: redis:7-alpine
+    container_name: aigc_redis
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
