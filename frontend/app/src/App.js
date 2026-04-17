@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import './App.css';
 import { getToken, removeToken, getAuthHeader } from './services/auth';
-import UserAuth from './components/UserAuth';
+import UserAuth from './components/userAuth';
 import UploadAnalyze from './components/UploadAnalyze';
 import ResultsView from './components/ResultsView';
 import HistoryView from './components/HistoryView';

@@ -46,14 +46,14 @@ This project utilizes Docker to manage its backend services (PostgreSQL and Redi
     # From the /backend directory
     python -m venv .venv
     source .venv/bin/activate  # On Windows, use: .\.venv\Scripts\activate
-    pip install -r requirements.txt
+    pip install -r ../requirements.txt
     ```
 
 5.  **Setup the Frontend (React)**
     In a separate terminal, navigate into the `frontend` folder and install the Node.js packages.
 
     ```bash
-    cd frontend
+    cd frontend/app
     npm install
     ```
 
